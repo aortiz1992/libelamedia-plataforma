@@ -2,19 +2,49 @@
 *{box-sizing:border-box}
 body{margin:0;font-family:'Lato',Arial,sans-serif;color:var(--ink);background:var(--grey);min-height:100vh}
 main{max-width:960px;margin:0 auto;padding:24px 16px}
-.card{background:var(--white);border:1px solid var(--line);border-radius:8px;padding:28px;max-width:420px;margin:12vh auto 0}
-.brand{display:inline-block;background:var(--black);color:var(--yellow);font-weight:900;letter-spacing:.08em;padding:6px 12px;border-radius:4px;font-size:14px}
+a{color:var(--ink)}
+.card{background:var(--white);border:1px solid var(--line);border-radius:8px;padding:28px;max-width:420px;margin:0 auto}
+.card.login{margin-top:12vh}
+.card.wide{max-width:none;margin:16px 0 0;padding:20px}
+.brand{display:inline-block;background:var(--black);color:var(--yellow);font-weight:900;letter-spacing:.08em;padding:6px 12px;border-radius:4px;font-size:14px;text-decoration:none}
 h1{font-size:22px;margin:18px 0 6px}
+h1.page{font-size:26px;margin:4px 10px 12px 0;display:inline-block}
+h2{font-size:17px;margin:0 0 12px}
 p{line-height:1.5}
 .muted{color:var(--muted)}
+.small{font-size:13px}
+.pre{white-space:pre-wrap}
+.count{font-weight:400;color:var(--muted);font-size:14px}
 label{display:block;font-weight:700;margin:18px 0 6px;font-size:14px}
-input[type=email]{width:100%;padding:12px;border:1px solid var(--ink);border-radius:6px;font:inherit;background:var(--white)}
+input[type=email],input[type=search],select{width:100%;padding:12px;border:1px solid var(--ink);border-radius:6px;font:inherit;background:var(--white)}
 button{font:inherit;font-weight:700;cursor:pointer;border:0;border-radius:6px;padding:12px 18px;background:var(--black);color:var(--yellow)}
 button.block{width:100%;margin-top:16px}
-button.ghost{background:transparent;color:var(--ink);border:1px solid var(--ink)}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--ink);padding:8px 14px}
 button:disabled{opacity:.5;cursor:wait}
 :focus-visible{outline:3px solid var(--yellow);outline-offset:2px;box-shadow:0 0 0 5px var(--black)}
 .msg{margin-top:14px;font-size:14px}
 .msg.err{color:var(--err)}
-header.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:24px}
-.stat{font-size:44px;font-weight:900;margin:4px 0}
+header.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.who{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin:8px 0 16px}
+.filters label{margin:0 0 4px}
+.filters input,.filters select{padding:10px}
+ul.rows,ul.plain{list-style:none;margin:0;padding:0}
+ul.plain li{padding:10px 0;border-top:1px solid var(--line);line-height:1.5}
+ul.plain li:first-child{border-top:0;padding-top:0}
+a.row{display:flex;justify-content:space-between;gap:12px;align-items:center;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:8px;text-decoration:none;color:inherit}
+a.row:hover{border-color:var(--black)}
+.r-main{display:flex;flex-direction:column;min-width:0}
+.r-main .muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}
+.tag{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--grey);border:1px solid var(--line)}
+.tag.bad{background:var(--err);border-color:var(--err);color:var(--white)}
+.tag.stage-nueva{background:var(--white)}
+.tag.stage-ganada{background:var(--black);color:var(--yellow);border-color:var(--black)}
+.tag.stage-interesada,.tag.stage-reunion,.tag.stage-propuesta{background:var(--yellow);border-color:var(--black)}
+.tag.stage-perdida{color:var(--muted)}
+dl.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px 24px;margin:0}
+dl.grid dt{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+dl.grid dd{margin:2px 0 0;line-height:1.45;overflow-wrap:anywhere}
+dl.grid ul{margin:0;padding-left:18px}
+@media(max-width:640px){.filters{grid-template-columns:1fr 1fr}.filters div:first-child{grid-column:1/-1}a.row{flex-direction:column;align-items:flex-start}.r-side{align-items:flex-start}}
