@@ -145,11 +145,12 @@
   /* ------------------------------------------------------------ marco */
   function shell(inner) {
     var hs = location.hash || "#/";
-    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : "l";
+    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : /^#\/prospeccion/.test(hs) ? "p" : "l";
     setHtml('<header class="bar"><a class="brand" href="#/">LIBELAMEDIA</a>' +
       '<nav class="nav" aria-label="Secciones"><a href="#/"' + (cur === "l" ? ' aria-current="page"' : "") + '>Empresas</a>' +
       '<a href="#/tablero"' + (cur === "t" ? ' aria-current="page"' : "") + '>Tablero</a>' +
-      '<a href="#/resumen"' + (cur === "r" ? ' aria-current="page"' : "") + '>Resumen</a></nav>' +
+      '<a href="#/resumen"' + (cur === "r" ? ' aria-current="page"' : "") + '>Resumen</a>' +
+      '<a href="#/prospeccion"' + (cur === "p" ? ' aria-current="page"' : "") + '>Prospección</a></nav>' +
       '<span class="who"><span class="muted">' + esc(session.user.email) + '</span> ' +
       '<button class="ghost" id="out">Salir</button></span></header>' + inner);
     document.getElementById("out").addEventListener("click", async function () {
@@ -308,6 +309,47 @@
       '<section class="card wide"><h2>Tareas vencidas <span class="count">' + vencidas.length + '</span></h2>' + tlist(vencidas) + '</section>' +
       '<section class="card wide"><h2>Tareas de los próximos 7 días <span class="count">' + proximas.length + '</span></h2>' + tlist(proximas) + '</section>' +
       '<section class="card wide"><h2>Calidad de los datos</h2><p class="small">' + sinContacto + ' empresa(s) sin ningún contacto · ' + nExcl + ' entrada(s) en la lista de exclusión · ' + tar.length + ' tareas pendientes en total.</p></section>');
+  }
+
+  /* ------------------------------------------------------------ prospección */
+  var ESTADO_SOL = { pendiente: "Pendiente", en_curso: "En curso", hecha: "Hecha", error: "Con error", cancelada: "Cancelada" };
+
+  async function showProspeccion() {
+    shell('<p class="muted">Cargando…</p>');
+    var r = await db.from("solicitudes_prospeccion").select("*").order("creada_en", { ascending: false }).limit(50);
+    if (r.error) return fail("No se pudo leer: " + r.error.message);
+    var sols = r.data;
+    shell('<h1 class="page">Prospección</h1>' +
+      '<p class="muted">Pide que se busquen empresas nuevas. Una tarea programada atiende las peticiones <strong>una vez al día por la mañana</strong> (máximo 30 empresas al día) y las carga como etapa «Nueva». <strong>No envía nada.</strong> Solo se cargan empresas con web propia comprobada y email verificado, con su análisis de web.</p>' +
+      '<section class="card wide"><h2>Nueva petición</h2><form id="sf">' +
+      '<label for="s_sector">Qué empresas buscar *</label><input id="s_sector" type="text" required placeholder="p. ej. fabricantes de muebles y lámparas">' +
+      '<label for="s_zona">Zona</label><input id="s_zona" type="text" placeholder="p. ej. Extremadura, toda España, Alemania">' +
+      '<label for="s_cant">Cuántas (1–30)</label><input id="s_cant" type="number" min="1" max="30" value="10" required>' +
+      '<label for="s_notas">Criterios o notas</label><textarea id="s_notas" rows="3" placeholder="p. ej. con tienda online propia, más de 5 empleados…"></textarea>' +
+      '<p class="msg err" id="serr" role="alert"></p><div class="actions left"><button type="submit">Pedir prospección</button></div></form></section>' +
+      '<section class="card wide"><h2>Peticiones <span class="count">' + sols.length + '</span></h2>' +
+      (sols.length ? '<ul class="plain">' + sols.map(function (s) {
+        return '<li><div class="li-h"><span><strong>' + esc(s.sector) + '</strong>' + (s.zona ? ' · ' + esc(s.zona) : "") + ' · ' + s.cantidad + ' <span class="tag">' + esc(ESTADO_SOL[s.estado] || s.estado) + '</span></span>' +
+          '<span class="li-a">' + (s.estado === "pendiente" ? '<button type="button" class="ghost sm" data-cancel="' + s.id + '">Cancelar</button>' : "") + '</span></div>' +
+          '<span class="muted small">' + esc(fecha(s.creada_en)) + (s.procesada_en ? ' · atendida ' + esc(fecha(s.procesada_en)) + ' · ' + s.empresas_cargadas + ' cargada(s)' : "") + '</span>' +
+          (s.notas ? '<br><span class="small">' + esc(s.notas) + '</span>' : "") +
+          (s.resultado ? '<br><span class="small pre">' + esc(s.resultado) + '</span>' : "") + '</li>';
+      }).join("") + '</ul>' : '<p class="muted">Aún no hay peticiones.</p>') + '</section>');
+    document.getElementById("sf").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      var b = e.target.querySelector("button"); b.disabled = true;
+      var v = function (id) { return document.getElementById(id).value.trim() || null; };
+      var n = Number(document.getElementById("s_cant").value);
+      var ins = await db.from("solicitudes_prospeccion").insert({ sector: v("s_sector"), zona: v("s_zona"), cantidad: n, notas: v("s_notas") });
+      if (ins.error) { document.getElementById("serr").textContent = friendly(ins.error); b.disabled = false; return; }
+      toast("Petición guardada: se atenderá en la próxima ejecución diaria"); showProspeccion();
+    });
+    root.querySelectorAll("[data-cancel]").forEach(function (b) {
+      b.addEventListener("click", async function () {
+        var u = await db.from("solicitudes_prospeccion").update({ estado: "cancelada" }).eq("id", b.getAttribute("data-cancel")).eq("estado", "pendiente");
+        if (u.error) toast(friendly(u.error), true); else { toast("Petición cancelada"); showProspeccion(); }
+      });
+    });
   }
 
   /* ------------------------------------------------------------ ficha */
@@ -561,6 +603,7 @@
     if (m) showEmpresa(m[1]);
     else if (/^#\/tablero/.test(location.hash)) showBoard();
     else if (/^#\/resumen/.test(location.hash)) showSummary();
+    else if (/^#\/prospeccion/.test(location.hash)) showProspeccion();
     else showList();
   }
 
