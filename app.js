@@ -15,13 +15,14 @@
   var ESTADO_OP = { abierta: "Abierta", ganada: "Ganada", perdida: "Perdida" };
   var CANALES = { "": "—", email: "Email", telefono: "Teléfono", whatsapp: "WhatsApp", linkedin: "LinkedIn" };
   var IDIOMAS = { es: "Español", en: "Inglés" };
+  var REPITE = { "": "No se repite", semanal: "Cada semana", mensual: "Cada mes" };
 
   function esc(s) { return s == null ? "" : String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   function safeUrl(u) { return /^https?:\/\//i.test(u || "") ? u : null; }
   function fecha(d) { return d ? new Date(d).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" }) : ""; }
   function dinero(n) { return n == null ? "" : Number(n).toLocaleString("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); }
   function norm(s) { return String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); }
-  function hoy() { return new Date().toISOString().slice(0, 10); }
+  function hoy() { return new Date().toLocaleDateString("sv-SE"); }
   function dominioDe(u) {
     if (!u) return null;
     var s = String(u).trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[\/?#]/)[0];
@@ -145,9 +146,10 @@
   /* ------------------------------------------------------------ marco */
   function shell(inner) {
     var hs = location.hash || "#/";
-    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : /^#\/prospeccion/.test(hs) ? "p" : "l";
+    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : /^#\/prospeccion/.test(hs) ? "p" : /^#\/empresa/.test(hs) ? "l" : "h";
     setHtml('<header class="bar"><a class="brand" href="#/">LIBELAMEDIA</a>' +
-      '<nav class="nav" aria-label="Secciones"><a href="#/"' + (cur === "l" ? ' aria-current="page"' : "") + '>Empresas</a>' +
+      '<nav class="nav" aria-label="Secciones"><a href="#/"' + (cur === "h" ? ' aria-current="page"' : "") + '>Hoy</a>' +
+      '<a href="#/empresas"' + (cur === "l" ? ' aria-current="page"' : "") + '>Empresas</a>' +
       '<a href="#/tablero"' + (cur === "t" ? ' aria-current="page"' : "") + '>Tablero</a>' +
       '<a href="#/resumen"' + (cur === "r" ? ' aria-current="page"' : "") + '>Resumen</a>' +
       '<a href="#/prospeccion"' + (cur === "p" ? ' aria-current="page"' : "") + '>Prospección</a></nav>' +
@@ -302,13 +304,111 @@
       return '<li><div class="li-h"><span><a href="#/empresa/' + t.empresa_id + '"><strong>' + esc(t.empresas ? t.empresas.nombre : "(sin empresa)") + '</strong></a> — ' + esc(t.titulo) + '</span><span class="muted small">' + (t.vence_el ? esc(fecha(t.vence_el)) : "sin fecha") + '</span></div></li>'; }).join("") + '</ul>' : '<p class="muted">Nada.</p>'; }
 
     shell('<h1 class="page">Resumen</h1>' +
-      '<div class="stats">' + stat(rows.length, "Empresas", "#/") + stat(contactadas, "Ya contactadas", "#/tablero") + stat(abiertas.length + " · " + dinero(suma(abiertas)), "Oportunidades abiertas") +
+      '<div class="stats">' + stat(rows.length, "Empresas", "#/empresas") + stat(contactadas, "Ya contactadas", "#/tablero") + stat(abiertas.length + " · " + dinero(suma(abiertas)), "Oportunidades abiertas") +
       stat(ganadas.length + " · " + dinero(suma(ganadas)), "Ganadas") + stat(enviados, "Emails enviados (30 días)") + stat(respuestas, "Respuestas recibidas (30 días)") + '</div>' +
       '<section class="card wide"><h2>Empresas por etapa</h2><ul class="bars">' + Object.keys(ETAPAS).map(function (k) {
         return '<li><span class="bl">' + esc(ETAPAS[k]) + '</span><span class="bt"><span class="bf" style="width:' + Math.round(porEtapa[k] / max * 100) + '%"></span></span><span class="bn">' + porEtapa[k] + '</span></li>'; }).join("") + '</ul></section>' +
       '<section class="card wide"><h2>Tareas vencidas <span class="count">' + vencidas.length + '</span></h2>' + tlist(vencidas) + '</section>' +
       '<section class="card wide"><h2>Tareas de los próximos 7 días <span class="count">' + proximas.length + '</span></h2>' + tlist(proximas) + '</section>' +
       '<section class="card wide"><h2>Calidad de los datos</h2><p class="small">' + sinContacto + ' empresa(s) sin ningún contacto · ' + nExcl + ' entrada(s) en la lista de exclusión · ' + tar.length + ' tareas pendientes en total.</p></section>');
+  }
+
+  /* ------------------------------------------------------------ hoy */
+  function sumaDias(n) { var d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString("sv-SE"); }
+  function soloNum(s) { return String(s || "").replace(/[^\d+]/g, ""); }
+  function telHref(s) { var n = soloNum(s.split("/")[0]); return n ? "tel:" + n : null; }
+  function waHref(s) { var n = soloNum(s).replace(/^\+/, ""); if (/^[67]\d{8}$/.test(n)) n = "34" + n; return n ? "https://wa.me/" + n : null; }
+  function relativa(d) {
+    var dif = Math.round((new Date(d + "T00:00:00") - new Date(hoy() + "T00:00:00")) / 864e5);
+    return dif === 0 ? "hoy" : dif === 1 ? "mañana" : dif === -1 ? "ayer" : dif < 0 ? "hace " + (-dif) + " días" : "en " + dif + " días";
+  }
+  function rellenarGuion(g, e, c) {
+    var v = { nombre: c && c.nombre, empresa: e.nombre, gancho: e.gancho, producto_a_citar: e.producto_a_citar };
+    return String(g || "").replace(/\{(\w+)\}/g, function (m, k) { return v[k] ? v[k] : "[falta " + k + "]"; });
+  }
+
+  async function showHoy() {
+    shell('<p class="muted">Cargando…</p>');
+    var res = await Promise.all([
+      db.from("tareas").select("*,empresas(id,nombre,gancho,producto_a_citar,puntos_debiles,contactos(nombre,cargo,telefono,whatsapp,linkedin_url,email,es_principal))")
+        .eq("estado", "pendiente").order("vence_el", { ascending: true, nullsFirst: false }),
+      db.from("configuracion").select("valor").eq("clave", "guion_llamada").maybeSingle()
+    ]);
+    if (res[0].error) return fail("No se pudo leer: " + res[0].error.message);
+    var tar = res[0].data, guion = res[1].data ? res[1].data.valor : "";
+    var h0 = hoy(), h7 = sumaDias(7);
+    var grupos = [
+      { t: "Vencidas", cls: "late", l: tar.filter(function (x) { return x.vence_el && x.vence_el < h0; }) },
+      { t: "Hoy", l: tar.filter(function (x) { return x.vence_el === h0; }) },
+      { t: "Próximos 7 días", l: tar.filter(function (x) { return x.vence_el && x.vence_el > h0 && x.vence_el <= h7; }) },
+      { t: "Más adelante", fold: true, l: tar.filter(function (x) { return x.vence_el && x.vence_el > h7; }) },
+      { t: "Sin fecha", fold: true, l: tar.filter(function (x) { return !x.vence_el; }) }
+    ];
+
+    function card(t) {
+      var e = t.empresas, cs = e ? (e.contactos || []).slice().sort(function (a, b) { return (b.es_principal ? 1 : 0) - (a.es_principal ? 1 : 0); }) : [];
+      var det = "";
+      if (e && t.tipo === "llamada") {
+        det = '<details class="prep"><summary>Preparar la llamada</summary>' +
+          (cs.length ? '<ul class="plain">' + cs.map(function (c) {
+            var th = c.telefono ? telHref(c.telefono) : null, wh = c.whatsapp ? waHref(c.whatsapp) : null;
+            return '<li><strong>' + esc(c.nombre || "(sin nombre)") + '</strong>' + (c.cargo ? ' · ' + esc(c.cargo) : "") +
+              (th ? ' · <a class="callbtn" href="' + esc(th) + '">Llamar ' + esc(c.telefono) + '</a>' : "") +
+              (wh ? ' · <a href="' + esc(wh) + '" target="_blank" rel="noopener noreferrer">WhatsApp</a>' : "") + '</li>';
+          }).join("") + '</ul>' : '<p class="muted small">Esta empresa no tiene contactos.</p>') +
+          (e.gancho ? '<p class="small"><strong>Gancho:</strong> ' + esc(e.gancho) + '</p>' : "") +
+          (e.producto_a_citar ? '<p class="small"><strong>Producto a citar:</strong> ' + esc(e.producto_a_citar) + '</p>' : "") +
+          ((e.puntos_debiles || []).length ? '<p class="small"><strong>Puntos débiles:</strong></p><ul class="small">' + e.puntos_debiles.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join("") + '</ul>' : "") +
+          '<p class="small"><strong>Guion</strong></p><pre class="guion">' + esc(rellenarGuion(guion, e, cs.filter(function (c) { return c.es_principal; })[0] || cs[0])) + '</pre></details>';
+      } else if (e && t.tipo === "linkedin") {
+        var li = cs.filter(function (c) { return safeUrl(c.linkedin_url); })[0];
+        det = '<p class="small">' + (li ? '<a href="' + esc(li.linkedin_url) + '" target="_blank" rel="noopener noreferrer">Abrir el LinkedIn de ' + esc(li.nombre || "contacto") + '</a>'
+          : '<a href="https://www.linkedin.com/search/results/companies/?keywords=' + encodeURIComponent(e.nombre) + '" target="_blank" rel="noopener noreferrer">Buscar ' + esc(e.nombre) + ' en LinkedIn</a>') + '</p>';
+      }
+      return '<li class="tk" data-id="' + t.id + '"><div class="li-h"><span><span class="tag">' + esc(TIPO_TAREA[t.tipo] || t.tipo) + '</span> <strong>' + esc(t.titulo) + '</strong>' +
+        (e ? ' · <a href="#/empresa/' + e.id + '">' + esc(e.nombre) + '</a>' : "") + (t.repite ? ' <span class="tag">se repite</span>' : "") + '</span>' +
+        '<span class="muted small">' + (t.vence_el ? esc(fecha(t.vence_el)) + ' · ' + relativa(t.vence_el) : "sin fecha") + '</span></div>' +
+        (t.notas ? '<p class="small muted">' + esc(t.notas) + '</p>' : "") + det +
+        '<div class="li-a tk-a"><button type="button" class="primary sm" data-tk="hecha">Hecha</button>' +
+        '<label class="sr" for="ap_' + t.id + '">Aplazar</label><select class="mv" id="ap_' + t.id + '" data-tk="aplazar"><option value="">Aplazar…</option><option value="1">Mañana</option><option value="3">3 días</option><option value="7">1 semana</option><option value="30">1 mes</option></select>' +
+        '<button type="button" class="ghost sm" data-tk="cancelar">Cancelar</button></div></li>';
+    }
+
+    shell('<div class="sec-h"><h1 class="page">Hoy <span class="count">' + tar.length + ' pendiente(s)</span></h1><span class="li-a">' +
+      '<button type="button" class="ghost sm" id="hg">Editar guion de llamada</button><button type="button" class="sm" id="hn">+ Nueva tarea</button></span></div>' +
+      (tar.length ? "" : '<p class="muted">No tienes tareas pendientes. Inicia una cadencia desde la ficha de una empresa o crea una tarea nueva.</p>') +
+      grupos.filter(function (g) { return g.l.length; }).map(function (g) {
+        var body = '<ul class="plain">' + g.l.map(card).join("") + '</ul>';
+        return g.fold ? '<details class="card wide"><summary><h2 class="inl">' + g.t + ' <span class="count">' + g.l.length + '</span></h2></summary>' + body + '</details>'
+          : '<section class="card wide ' + (g.cls || "") + '"><h2>' + g.t + ' <span class="count">' + g.l.length + '</span></h2>' + body + '</section>';
+      }).join(""));
+
+    document.getElementById("hg").addEventListener("click", function () {
+      openForm("Guion de llamada", [{ k: "valor", label: "Texto (variables: {nombre} {empresa} {gancho} {producto_a_citar})", type: "textarea", rows: 18, req: true }], { valor: guion }, async function (v) {
+        must(await db.from("configuracion").update({ valor: v.valor, actualizado_en: new Date().toISOString() }).eq("clave", "guion_llamada")); toast("Guion guardado"); showHoy();
+      });
+    });
+    document.getElementById("hn").addEventListener("click", async function () {
+      var emp = await loadEmpresas().catch(function () { return []; });
+      var o = { "": "(ninguna)" }; emp.forEach(function (x) { o[x.id] = x.nombre; });
+      openForm("Nueva tarea", [{ k: "empresa_id", label: "Empresa", type: "select", options: o }].concat(F.tarea), { tipo: "otro" }, async function (v) {
+        norm0(v); v.origen = "manual"; must(await db.from("tareas").insert(v)); toast("Tarea añadida"); showHoy();
+      });
+    });
+    async function cambiar(id, cuerpo, msg) {
+      var r = await db.from("tareas").update(cuerpo).eq("id", id);
+      if (r.error) return toast(friendly(r.error), true);
+      toast(msg); showHoy();
+    }
+    var cont = root;
+    cont.querySelectorAll("[data-tk]").forEach(function (el) {
+      var id = el.closest(".tk").getAttribute("data-id"), k = el.getAttribute("data-tk");
+      if (k === "aplazar") el.addEventListener("change", function () { if (el.value) cambiar(id, { vence_el: sumaDias(Number(el.value)) }, "Tarea aplazada"); });
+      else el.addEventListener("click", function () {
+        if (k === "hecha") { var t = tar.filter(function (x) { return x.id === id; })[0]; cambiar(id, { estado: "hecha", completada_en: new Date().toISOString() }, t && t.repite ? "Hecha. Creada la siguiente (" + t.repite + ")" : "Tarea hecha"); }
+        else cambiar(id, { estado: "cancelada" }, "Tarea cancelada");
+      });
+    });
   }
 
   /* ------------------------------------------------------------ prospección */
@@ -374,7 +474,7 @@
     var web = safeUrl(e.web_url) || (e.dominio ? "https://" + e.dominio : null);
     var lugar = [e.poblacion, e.region, e.pais].filter(Boolean).join(", ");
 
-    var h = '<p><a href="#/">← Empresas</a></p>' +
+    var h = '<p><a href="#/empresas">← Empresas</a></p>' +
       '<div class="head"><h1 class="page">' + esc(e.nombre) + '</h1>' +
       '<span class="tag">' + esc(TIPOS[e.tipo] || e.tipo) + '</span>' +
       (e.no_contactar ? ' <span class="tag bad">No contactar</span>' : '') + '</div>' +
@@ -414,10 +514,10 @@
           (o.notas ? '<br><span class="small">' + esc(o.notas) + '</span>' : "") + '</li>';
       }).join("") + '</ul>' : '<p class="muted">Sin oportunidades.</p>') + '</section>';
 
-    h += '<section class="card wide"><div class="sec-h"><h2>Tareas <span class="count">' + tar.length + '</span></h2>' + btn("add-tarea", "+ Añadir") + '</div>' +
+    h += '<section class="card wide"><div class="sec-h"><h2>Tareas <span class="count">' + tar.length + '</span></h2><span class="li-a">' + btn("cadencia", "Iniciar cadencia") + btn("add-tarea", "+ Añadir") + '</span></div>' +
       (tar.length ? '<ul class="plain">' + tar.map(function (t) {
         var pend = t.estado === "pendiente";
-        return '<li class="' + (pend ? "" : "done") + '"><div class="li-h"><span><strong>' + esc(t.titulo) + '</strong> <span class="tag">' + esc(t.estado) + '</span>' + (t.vence_el ? ' · vence ' + esc(fecha(t.vence_el)) : "") + '</span>' +
+        return '<li class="' + (pend ? "" : "done") + '"><div class="li-h"><span><strong>' + esc(t.titulo) + '</strong> <span class="tag">' + esc(t.estado) + '</span>' + (t.repite ? ' <span class="tag">se repite: ' + esc(t.repite) + '</span>' : "") + (t.vence_el ? ' · vence ' + esc(fecha(t.vence_el)) : "") + '</span>' +
           '<span class="li-a">' + (pend ? btn("tarea:" + t.id + ":hecha", "Hecha", "primary") + btn("tarea:" + t.id + ":cancelada", "Cancelar") : btn("tarea:" + t.id + ":pendiente", "Reabrir")) + btn("edit-tarea:" + t.id, "Editar") + btn("del-tarea:" + t.id, "Borrar") + '</span></div>' +
           (t.notas ? '<span class="muted small">' + esc(t.notas) + '</span>' : "") + '</li>';
       }).join("") + '</ul>' : '<p class="muted">Sin tareas.</p>') + '</section>';
@@ -486,6 +586,7 @@
     { k: "titulo", label: "Título", req: true },
     { k: "tipo", label: "Tipo", type: "select", options: TIPO_TAREA },
     { k: "vence_el", label: "Vence el", type: "date" },
+    { k: "repite", label: "Se repite", type: "select", options: REPITE },
     { k: "notas", label: "Notas", type: "textarea" }
   ];
   F.inter = [
@@ -555,6 +656,10 @@
     });
     if (a === "del-op") return confirmDialog({ title: "Borrar oportunidad", body: "<p>¿Borrar <strong>" + esc(pick(ctx.ops, id).titulo) + "</strong>?</p>", ok: "Borrar", danger: true,
       run: async function () { must(await db.from("oportunidades").delete().eq("id", id)); } }).then(function (ok) { if (ok) { toast("Oportunidad borrada"); refresh(); } });
+    if (a === "cadencia") return openForm("Iniciar cadencia de " + e.nombre, [{ k: "fecha", label: "Fecha del email 1 (día 1)", type: "date", req: true }], { fecha: hoy() }, async function (v) {
+      must(await db.rpc("iniciar_cadencia", { p_empresa: e.id, p_fecha: v.fecha })); cache.empresas = null;
+      toast("Cadencia iniciada: LinkedIn el día 2 y llamada el día 8"); await refresh();
+    });
     if (a === "add-tarea") return openForm("Nueva tarea", F.tarea, { tipo: "otro" }, async function (v) {
       norm0(v); must(await db.from("tareas").insert(Object.assign({ empresa_id: e.id, origen: "manual" }, v))); toast("Tarea añadida"); await refresh();
     });
@@ -576,7 +681,7 @@
       ok: "Dar de baja", danger: true, run: darDeBaja }).then(function (ok) { if (ok) { toast("Baja registrada"); refresh(); } });
     if (a === "borrar") return confirmDialog({ title: "Borrar todos los datos de " + e.nombre,
       body: "<p>Se eliminarán la empresa, sus " + ctx.cont.length + " contacto(s), oportunidades, tareas e historial. <strong>No se puede deshacer.</strong> Solo permanecerá la lista de exclusión (emails" + (e.dominio ? " y dominio" : "") + ") para no volver a escribirle.</p>",
-      ok: "Borrar definitivamente", danger: true, type: e.nombre, run: borrarDatos }).then(function (ok) { if (ok) { cache.empresas = null; toast("Datos borrados"); location.hash = "#/"; } });
+      ok: "Borrar definitivamente", danger: true, type: e.nombre, run: borrarDatos }).then(function (ok) { if (ok) { cache.empresas = null; toast("Datos borrados"); location.hash = "#/empresas"; } });
   }
 
   root.addEventListener("click", function (ev) {
@@ -590,6 +695,7 @@
       must(await db.from("empresas").update({ etapa: nueva }).eq("id", ctx.e.id));
       ctx.e.etapa = nueva; sel.className = "stage-" + nueva; cache.empresas = null;
       toast("Etapa: " + ETAPAS[nueva]);
+      showEmpresa(ctx.e.id); // las tareas automáticas las crea la base de datos
     } catch (err) { sel.value = vieja; toast(friendly(err), true); }
   });
 
@@ -604,7 +710,8 @@
     else if (/^#\/tablero/.test(location.hash)) showBoard();
     else if (/^#\/resumen/.test(location.hash)) showSummary();
     else if (/^#\/prospeccion/.test(location.hash)) showProspeccion();
-    else showList();
+    else if (/^#\/empresas/.test(location.hash)) showList();
+    else showHoy();
   }
 
   var hash = location.hash || "";

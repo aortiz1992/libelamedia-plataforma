@@ -47,6 +47,18 @@ dl.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));ga
 dl.grid dt{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
 dl.grid dd{margin:2px 0 0;line-height:1.45;overflow-wrap:anywhere}
 dl.grid ul{margin:0;padding-left:18px}
+.card.late{border-color:var(--err)}
+.card.late h2{color:var(--err)}
+details.card summary{cursor:pointer;list-style:none}
+details.card summary::-webkit-details-marker{display:none}
+h2.inl{display:inline;margin:0}
+.tk{padding:12px 0}
+.tk-a{margin-top:8px;align-items:center}
+.tk-a select.mv{width:auto;padding:6px 8px;font-size:13px;border-radius:6px;border:1px solid var(--ink);background:var(--white)}
+details.prep{margin:8px 0;background:var(--grey);border:1px solid var(--line);border-radius:6px;padding:8px 12px}
+details.prep summary{cursor:pointer;font-weight:700}
+pre.guion{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.5;background:var(--white);border:1px solid var(--line);border-radius:6px;padding:12px;margin:6px 0 0}
+a.callbtn{font-weight:700}
 .nav{display:flex;gap:4px;order:3;width:100%}
 .nav a{padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:700;border:1px solid transparent}
 .nav a:hover{border-color:var(--line);background:var(--white)}
