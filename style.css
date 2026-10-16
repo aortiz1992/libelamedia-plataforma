@@ -47,6 +47,31 @@ dl.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));ga
 dl.grid dt{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
 dl.grid dd{margin:2px 0 0;line-height:1.45;overflow-wrap:anywhere}
 dl.grid ul{margin:0;padding-left:18px}
+.nav{display:flex;gap:4px;order:3;width:100%}
+.nav a{padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:700;border:1px solid transparent}
+.nav a:hover{border-color:var(--line);background:var(--white)}
+.nav a[aria-current=page]{background:var(--black);color:var(--yellow)}
+@media(min-width:720px){.nav{order:0;width:auto;margin-right:auto;margin-left:16px}}
+main.wide-main{max-width:none}
+.board{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;align-items:flex-start}
+.kcol{flex:0 0 250px;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:10px;min-height:120px}
+.kcol.over{outline:3px solid var(--yellow);box-shadow:0 0 0 5px var(--black)}
+.kcol h2{font-size:15px;margin:0 0 10px}
+.kcards{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:8px}
+.kcard{background:var(--grey);border:1px solid var(--line);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;cursor:grab}
+.kcard a{text-decoration:none}
+.kcard:active{cursor:grabbing}
+.kcard select.mv{padding:4px 6px;font-size:12px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:8px 0}
+.stat-card{background:var(--white);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:2px;text-decoration:none;color:inherit}
+a.stat-card:hover{border-color:var(--black)}
+.stat-card .big{font-size:26px;font-weight:900;line-height:1.15}
+ul.bars{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+ul.bars li{display:grid;grid-template-columns:96px 1fr 36px;align-items:center;gap:10px;font-size:14px}
+.bt{background:var(--grey);border-radius:4px;height:14px;overflow:hidden}
+.bf{display:block;height:100%;background:var(--black);min-width:2px}
+.bn{text-align:right;font-weight:700}
 textarea{width:100%;padding:12px;border:1px solid var(--ink);border-radius:6px;font:inherit;background:var(--white);resize:vertical}
 input[type=text],input[type=number],input[type=date]{width:100%;padding:12px;border:1px solid var(--ink);border-radius:6px;font:inherit;background:var(--white)}
 button.sm{padding:6px 12px;font-size:13px}

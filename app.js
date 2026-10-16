@@ -144,7 +144,12 @@
 
   /* ------------------------------------------------------------ marco */
   function shell(inner) {
+    var hs = location.hash || "#/";
+    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : "l";
     setHtml('<header class="bar"><a class="brand" href="#/">LIBELAMEDIA</a>' +
+      '<nav class="nav" aria-label="Secciones"><a href="#/"' + (cur === "l" ? ' aria-current="page"' : "") + '>Empresas</a>' +
+      '<a href="#/tablero"' + (cur === "t" ? ' aria-current="page"' : "") + '>Tablero</a>' +
+      '<a href="#/resumen"' + (cur === "r" ? ' aria-current="page"' : "") + '>Resumen</a></nav>' +
       '<span class="who"><span class="muted">' + esc(session.user.email) + '</span> ' +
       '<button class="ghost" id="out">Salir</button></span></header>' + inner);
     document.getElementById("out").addEventListener("click", async function () {
@@ -209,6 +214,100 @@
     function bind(id, key) { document.getElementById(id).addEventListener("input", function (e) { filtros[key] = e.target.value; paint(); }); }
     bind("q", "q"); bind("fe", "etapa"); bind("ft", "tipo"); bind("fs", "sector");
     paint();
+  }
+
+  /* ------------------------------------------------------------ tablero */
+  var BOARD_CAP = 25, expanded = {};
+
+  async function showBoard() {
+    shell('<p class="muted">Cargando…</p>');
+    var rows;
+    try { rows = await loadEmpresas(); } catch (e) { return fail("No se pudo leer: " + e.message); }
+    var byStage = {};
+    Object.keys(ETAPAS).forEach(function (k) { byStage[k] = []; });
+    rows.forEach(function (r) { (byStage[r.etapa] || (byStage[r.etapa] = [])).push(r); });
+
+    function card(r) {
+      return '<li class="kcard" draggable="true" data-id="' + r.id + '"><a href="#/empresa/' + r.id + '"><strong>' + esc(r.nombre) + '</strong></a>' +
+        '<span class="muted small">' + esc(r.dominio || [r.poblacion, r.region].filter(Boolean).join(", ")) + '</span>' +
+        (r.no_contactar ? '<span class="tag bad">No contactar</span>' : "") +
+        '<label class="sr" for="mv_' + r.id + '">Mover a</label><select class="mv" id="mv_' + r.id + '" data-id="' + r.id + '">' +
+        Object.keys(ETAPAS).map(function (k) { return '<option value="' + k + '"' + (r.etapa === k ? " selected" : "") + '>' + (r.etapa === k ? "Etapa: " : "Mover a ") + esc(ETAPAS[k]) + '</option>'; }).join("") +
+        '</select></li>';
+    }
+    function col(k) {
+      var list = byStage[k], all = expanded[k], shown = all ? list : list.slice(0, BOARD_CAP);
+      return '<section class="kcol" data-stage="' + k + '"><h2><span class="tag stage-' + k + '">' + esc(ETAPAS[k]) + '</span> <span class="count">' + list.length + '</span></h2>' +
+        '<ul class="kcards">' + shown.map(card).join("") + '</ul>' +
+        (list.length > BOARD_CAP && !all ? '<button type="button" class="ghost sm" data-more="' + k + '">Ver las ' + list.length + '</button>' : "") + '</section>';
+    }
+    shell('<h1 class="page">Tablero <span class="count">' + rows.length + ' empresas</span></h1>' +
+      '<p class="muted small">Arrastra una tarjeta a otra columna, o usa el desplegable de la tarjeta.</p>' +
+      '<div class="board">' + Object.keys(ETAPAS).map(col).join("") + '</div>');
+
+    async function mover(id, etapa) {
+      var r = rows.filter(function (x) { return x.id === id; })[0];
+      if (!r || r.etapa === etapa) return;
+      try { must(await db.from("empresas").update({ etapa: etapa }).eq("id", id)); toast(r.nombre + " → " + ETAPAS[etapa]); r.etapa = etapa; }
+      catch (err) { toast(friendly(err), true); }
+      showBoard();
+    }
+    var board = root.querySelector(".board");
+    board.addEventListener("change", function (e) { if (e.target.classList.contains("mv")) mover(e.target.getAttribute("data-id"), e.target.value); });
+    board.addEventListener("click", function (e) { var m = e.target.getAttribute && e.target.getAttribute("data-more"); if (m) { expanded[m] = true; showBoard(); } });
+    var dragId = null;
+    board.addEventListener("dragstart", function (e) { var c = e.target.closest(".kcard"); if (!c) return; dragId = c.getAttribute("data-id"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
+    board.addEventListener("dragover", function (e) { var c = e.target.closest(".kcol"); if (c && dragId) { e.preventDefault(); c.classList.add("over"); } });
+    board.addEventListener("dragleave", function (e) { var c = e.target.closest(".kcol"); if (c && !c.contains(e.relatedTarget)) c.classList.remove("over"); });
+    board.addEventListener("drop", function (e) {
+      var c = e.target.closest(".kcol"); if (!c || !dragId) return;
+      e.preventDefault(); var id = dragId; dragId = null; mover(id, c.getAttribute("data-stage"));
+    });
+  }
+
+  /* ------------------------------------------------------------ resumen */
+  async function showSummary() {
+    shell('<p class="muted">Cargando…</p>');
+    var desde = new Date(Date.now() - 30 * 864e5).toISOString();
+    var res;
+    try {
+      res = await Promise.all([
+        loadEmpresas(),
+        db.from("oportunidades").select("estado,importe"),
+        db.from("tareas").select("id,titulo,tipo,vence_el,empresa_id,empresas(nombre)").eq("estado", "pendiente").order("vence_el", { ascending: true, nullsFirst: false }),
+        db.from("interacciones").select("tipo,clasificacion_respuesta").gte("ocurrio_en", desde),
+        db.from("exclusiones").select("id", { count: "exact", head: true })
+      ]);
+      for (var i = 1; i < res.length; i++) must(res[i]);
+    } catch (e) { return fail("No se pudo leer: " + e.message); }
+    var rows = res[0], ops = res[1].data, tar = res[2].data, ints = res[3].data, nExcl = res[4].count;
+
+    var porEtapa = {}; Object.keys(ETAPAS).forEach(function (k) { porEtapa[k] = 0; });
+    rows.forEach(function (r) { porEtapa[r.etapa] = (porEtapa[r.etapa] || 0) + 1; });
+    var max = Math.max.apply(null, Object.keys(porEtapa).map(function (k) { return porEtapa[k]; })) || 1;
+    var abiertas = ops.filter(function (o) { return o.estado === "abierta"; });
+    var ganadas = ops.filter(function (o) { return o.estado === "ganada"; });
+    function suma(l) { return l.reduce(function (a, o) { return a + (Number(o.importe) || 0); }, 0); }
+    var hoyS = hoy(), en7 = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+    var vencidas = tar.filter(function (t) { return t.vence_el && t.vence_el < hoyS; });
+    var proximas = tar.filter(function (t) { return t.vence_el && t.vence_el >= hoyS && t.vence_el <= en7; });
+    var enviados = ints.filter(function (i) { return i.tipo === "email_enviado"; }).length;
+    var respuestas = ints.filter(function (i) { return i.tipo === "email_recibido"; }).length;
+    var contactadas = rows.filter(function (r) { return r.etapa !== "nueva"; }).length;
+    var sinContacto = rows.filter(function (r) { return !r.contactos || r.contactos.length === 0; }).length;
+
+    function stat(n, label, href) { return '<' + (href ? 'a href="' + href + '"' : 'div') + ' class="stat-card"><span class="big">' + esc(n) + '</span><span class="muted small">' + esc(label) + '</span></' + (href ? 'a' : 'div') + '>'; }
+    function tlist(l) { return l.length ? '<ul class="plain">' + l.map(function (t) {
+      return '<li><div class="li-h"><span><a href="#/empresa/' + t.empresa_id + '"><strong>' + esc(t.empresas ? t.empresas.nombre : "(sin empresa)") + '</strong></a> — ' + esc(t.titulo) + '</span><span class="muted small">' + (t.vence_el ? esc(fecha(t.vence_el)) : "sin fecha") + '</span></div></li>'; }).join("") + '</ul>' : '<p class="muted">Nada.</p>'; }
+
+    shell('<h1 class="page">Resumen</h1>' +
+      '<div class="stats">' + stat(rows.length, "Empresas", "#/") + stat(contactadas, "Ya contactadas", "#/tablero") + stat(abiertas.length + " · " + dinero(suma(abiertas)), "Oportunidades abiertas") +
+      stat(ganadas.length + " · " + dinero(suma(ganadas)), "Ganadas") + stat(enviados, "Emails enviados (30 días)") + stat(respuestas, "Respuestas recibidas (30 días)") + '</div>' +
+      '<section class="card wide"><h2>Empresas por etapa</h2><ul class="bars">' + Object.keys(ETAPAS).map(function (k) {
+        return '<li><span class="bl">' + esc(ETAPAS[k]) + '</span><span class="bt"><span class="bf" style="width:' + Math.round(porEtapa[k] / max * 100) + '%"></span></span><span class="bn">' + porEtapa[k] + '</span></li>'; }).join("") + '</ul></section>' +
+      '<section class="card wide"><h2>Tareas vencidas <span class="count">' + vencidas.length + '</span></h2>' + tlist(vencidas) + '</section>' +
+      '<section class="card wide"><h2>Tareas de los próximos 7 días <span class="count">' + proximas.length + '</span></h2>' + tlist(proximas) + '</section>' +
+      '<section class="card wide"><h2>Calidad de los datos</h2><p class="small">' + sinContacto + ' empresa(s) sin ningún contacto · ' + nExcl + ' entrada(s) en la lista de exclusión · ' + tar.length + ' tareas pendientes en total.</p></section>');
   }
 
   /* ------------------------------------------------------------ ficha */
@@ -459,7 +558,10 @@
     if (!s) return showLogin();
     loadSectores().catch(function () {});
     var m = (location.hash || "").match(/^#\/empresa\/([0-9a-f-]{36})$/i);
-    if (m) showEmpresa(m[1]); else showList();
+    if (m) showEmpresa(m[1]);
+    else if (/^#\/tablero/.test(location.hash)) showBoard();
+    else if (/^#\/resumen/.test(location.hash)) showSummary();
+    else showList();
   }
 
   var hash = location.hash || "";
