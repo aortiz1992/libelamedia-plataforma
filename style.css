@@ -59,7 +59,7 @@ details.prep{margin:8px 0;background:var(--grey);border:1px solid var(--line);bo
 details.prep summary{cursor:pointer;font-weight:700}
 pre.guion{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.5;background:var(--white);border:1px solid var(--line);border-radius:6px;padding:12px;margin:6px 0 0}
 a.callbtn{font-weight:700}
-.nav{display:flex;gap:4px;order:3;width:100%}
+.nav{display:flex;flex-wrap:wrap;gap:4px;order:3;width:100%}
 .nav a{padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:700;border:1px solid transparent}
 .nav a:hover{border-color:var(--line);background:var(--white)}
 .nav a[aria-current=page]{background:var(--black);color:var(--yellow)}
