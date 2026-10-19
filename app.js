@@ -830,7 +830,7 @@
           (o.notas ? '<br><span class="small">' + esc(o.notas) + '</span>' : "") + '</li>';
       }).join("") + '</ul>' : '<p class="muted">Sin oportunidades.</p>') + '</section>';
 
-    h += '<section class="card wide"><div class="sec-h"><h2>Tareas <span class="count">' + tar.length + '</span></h2><span class="li-a">' + btn("cadencia", "Iniciar cadencia") + btn("add-tarea", "+ Añadir") + '</span></div>' +
+    h += '<section class="card wide"><div class="sec-h"><h2>Tareas <span class="count">' + tar.length + '</span></h2><span class="li-a">' + btn("cadencia", "Ya le envié el email 1 a mano") + btn("add-tarea", "+ Añadir") + '</span></div>' +
       (tar.length ? '<ul class="plain">' + tar.map(function (t) {
         var pend = t.estado === "pendiente";
         return '<li class="' + (pend ? "" : "done") + '"><div class="li-h"><span><strong>' + esc(t.titulo) + '</strong> <span class="tag">' + esc(t.estado) + '</span>' + (t.repite ? ' <span class="tag">se repite: ' + esc(t.repite) + '</span>' : "") + (t.vence_el ? ' · vence ' + esc(fecha(t.vence_el)) : "") + '</span>' +
@@ -972,9 +972,9 @@
     });
     if (a === "del-op") return confirmDialog({ title: "Borrar oportunidad", body: "<p>¿Borrar <strong>" + esc(pick(ctx.ops, id).titulo) + "</strong>?</p>", ok: "Borrar", danger: true,
       run: async function () { must(await db.from("oportunidades").delete().eq("id", id)); } }).then(function (ok) { if (ok) { toast("Oportunidad borrada"); refresh(); } });
-    if (a === "cadencia") return openForm("Iniciar cadencia de " + e.nombre, [{ k: "fecha", label: "Fecha del email 1 (día 1)", type: "date", req: true }], { fecha: hoy() }, async function (v) {
+    if (a === "cadencia") return openForm("Apuntar email 1 enviado a mano · " + e.nombre, [{ k: "fecha", label: "¿Qué día lo enviaste tú? Esto NO envía nada: solo lo apunta, pasa la empresa a «Contactada» y crea las tareas de LinkedIn (día 2) y llamada (día 8).", type: "date", req: true }], { fecha: hoy() }, async function (v) {
       must(await db.rpc("iniciar_cadencia", { p_empresa: e.id, p_fecha: v.fecha })); cache.empresas = null;
-      toast("Cadencia iniciada: LinkedIn el día 2 y llamada el día 8"); await refresh();
+      toast("Apuntado: LinkedIn el día 2 y llamada el día 8"); await refresh();
     });
     if (a === "add-tarea") return openForm("Nueva tarea", F.tarea, { tipo: "otro" }, async function (v) {
       norm0(v); must(await db.from("tareas").insert(Object.assign({ empresa_id: e.id, origen: "manual" }, v))); toast("Tarea añadida"); await refresh();
