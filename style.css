@@ -93,7 +93,7 @@ a.callbtn{font-weight:700}
 .nav a[aria-current=page]{background:var(--black);color:var(--yellow)}
 @media(min-width:720px){.nav{order:0;width:auto;margin-right:auto;margin-left:16px}}
 main.wide-main{max-width:none}
-.funnel{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;margin:8px 0 4px}
+.funnel{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin:8px 0 4px}
 .fstage{display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:var(--white);color:var(--ink);border:1px solid var(--line);padding:10px 12px;text-align:left;position:relative}
 .fstage:hover{border-color:var(--black)}
 .fstage.on{background:var(--black);color:var(--yellow);border-color:var(--black)}
