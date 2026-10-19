@@ -236,7 +236,10 @@
   }
 
   /* ------------------------------------------------------------ tablero */
-  var BOARD_CAP = 25, expanded = {};
+  // Embudo: arriba las etapas con su número (caben en cualquier ancho), abajo la lista de la etapa elegida.
+  var FLUJO = ["nueva", "contactada", "respondio", "interesada", "reunion", "propuesta", "ganada"];
+  var boardStage = null;
+  try { boardStage = localStorage.getItem("tablero_etapa"); } catch (e) {}
 
   async function showBoard() {
     shell('<p class="muted">Cargando…</p>');
@@ -245,41 +248,55 @@
     var byStage = {};
     Object.keys(ETAPAS).forEach(function (k) { byStage[k] = []; });
     rows.forEach(function (r) { (byStage[r.etapa] || (byStage[r.etapa] = [])).push(r); });
+    if (!boardStage || !ETAPAS[boardStage]) boardStage = FLUJO.filter(function (k) { return byStage[k].length; })[0] || "nueva";
 
-    function card(r) {
-      return '<li class="kcard" draggable="true" data-id="' + r.id + '"><a href="#/empresa/' + r.id + '"><strong>' + esc(r.nombre) + '</strong></a>' +
-        '<span class="muted small">' + esc(r.dominio || [r.poblacion, r.region].filter(Boolean).join(", ")) + '</span>' +
-        (r.no_contactar ? '<span class="tag bad">No contactar</span>' : "") +
-        '<label class="sr" for="mv_' + r.id + '">Mover a</label><select class="mv" id="mv_' + r.id + '" data-id="' + r.id + '">' +
-        Object.keys(ETAPAS).map(function (k) { return '<option value="' + k + '"' + (r.etapa === k ? " selected" : "") + '>' + (r.etapa === k ? "Etapa: " : "Mover a ") + esc(ETAPAS[k]) + '</option>'; }).join("") +
-        '</select></li>';
+    function chip(k, i) {
+      return '<button type="button" class="fstage' + (k === boardStage ? " on" : "") + (k === "perdida" ? " lost" : "") + '" data-stage="' + k + '" aria-pressed="' + (k === boardStage) + '">' +
+        (i != null ? '<span class="fnum">' + (i + 1) + '</span>' : "") +
+        '<span class="fname">' + esc(ETAPAS[k]) + '</span><span class="fcount">' + byStage[k].length + '</span></button>';
     }
-    function col(k) {
-      var list = byStage[k], all = expanded[k], shown = all ? list : list.slice(0, BOARD_CAP);
-      return '<section class="kcol" data-stage="' + k + '"><h2><span class="tag stage-' + k + '">' + esc(ETAPAS[k]) + '</span> <span class="count">' + list.length + '</span></h2>' +
-        '<ul class="kcards">' + shown.map(card).join("") + '</ul>' +
-        (list.length > BOARD_CAP && !all ? '<button type="button" class="ghost sm" data-more="' + k + '">Ver las ' + list.length + '</button>' : "") + '</section>';
+    function row(r) {
+      var i = FLUJO.indexOf(r.etapa), next = i >= 0 && i < FLUJO.length - 1 ? FLUJO[i + 1] : null;
+      var lugar = r.dominio || [r.poblacion, r.region || r.pais].filter(Boolean).join(", ");
+      return '<li class="frow" draggable="true" data-id="' + r.id + '">' +
+        '<span class="r-main"><a href="#/empresa/' + r.id + '"><strong>' + esc(r.nombre) + '</strong></a>' +
+        (r.no_contactar ? ' <span class="tag bad">No contactar</span>' : "") +
+        '<span class="muted small">' + esc([lugar, TIPOS[r.tipo] || r.tipo].filter(Boolean).join(" · ")) + '</span></span>' +
+        '<span class="f-acts">' +
+        (next ? '<button type="button" class="sm" data-go="' + r.id + '" data-to="' + next + '">Pasar a ' + esc(ETAPAS[next]) + ' →</button>' : "") +
+        '<label class="sr" for="mv_' + r.id + '">Mover a otra etapa</label><select class="mv" id="mv_' + r.id + '" data-id="' + r.id + '">' +
+        '<option value="">Mover a…</option>' +
+        Object.keys(ETAPAS).filter(function (k) { return k !== r.etapa; }).map(function (k) { return '<option value="' + k + '">' + esc(ETAPAS[k]) + '</option>'; }).join("") +
+        '</select></span></li>';
     }
-    shell('<h1 class="page">Tablero <span class="count">' + rows.length + ' empresas</span></h1>' +
-      '<p class="muted small">Arrastra una tarjeta a otra columna, o usa el desplegable de la tarjeta.</p>' +
-      '<div class="board">' + Object.keys(ETAPAS).map(col).join("") + '</div>');
+    var list = byStage[boardStage];
+    shell('<div class="tablero"><h1 class="page">Tablero <span class="count">' + rows.length + ' empresas</span></h1>' +
+      '<p class="muted small">Elige una etapa para ver sus empresas. Usa «Pasar a…» para avanzarlas, o arrastra una empresa sobre otra etapa.</p>' +
+      '<div class="funnel" role="group" aria-label="Etapas">' + FLUJO.map(chip).join("") + chip("perdida") + '</div>' +
+      '<section class="card wide"><h2><span class="tag stage-' + boardStage + '">' + esc(ETAPAS[boardStage]) + '</span> <span class="count">' + list.length + ' empresa(s)</span></h2>' +
+      (list.length ? '<ul class="list flist">' + list.map(row).join("") + '</ul>' : '<p class="muted">No hay empresas en esta etapa.</p>') + '</section></div>');
 
     async function mover(id, etapa) {
       var r = rows.filter(function (x) { return x.id === id; })[0];
-      if (!r || r.etapa === etapa) return;
+      if (!r || !etapa || r.etapa === etapa) return;
       try { must(await db.from("empresas").update({ etapa: etapa }).eq("id", id)); toast(r.nombre + " → " + ETAPAS[etapa]); r.etapa = etapa; }
       catch (err) { toast(friendly(err), true); }
       showBoard();
     }
-    var board = root.querySelector(".board");
-    board.addEventListener("change", function (e) { if (e.target.classList.contains("mv")) mover(e.target.getAttribute("data-id"), e.target.value); });
-    board.addEventListener("click", function (e) { var m = e.target.getAttribute && e.target.getAttribute("data-more"); if (m) { expanded[m] = true; showBoard(); } });
+    var view = root.querySelector(".tablero");
+    view.addEventListener("click", function (e) {
+      var st = e.target.closest && e.target.closest(".fstage");
+      if (st) { boardStage = st.getAttribute("data-stage"); try { localStorage.setItem("tablero_etapa", boardStage); } catch (x) {} showBoard(); return; }
+      var go = e.target.getAttribute && e.target.getAttribute("data-go");
+      if (go) mover(go, e.target.getAttribute("data-to"));
+    });
+    view.addEventListener("change", function (e) { if (e.target.classList.contains("mv")) mover(e.target.getAttribute("data-id"), e.target.value); });
     var dragId = null;
-    board.addEventListener("dragstart", function (e) { var c = e.target.closest(".kcard"); if (!c) return; dragId = c.getAttribute("data-id"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
-    board.addEventListener("dragover", function (e) { var c = e.target.closest(".kcol"); if (c && dragId) { e.preventDefault(); c.classList.add("over"); } });
-    board.addEventListener("dragleave", function (e) { var c = e.target.closest(".kcol"); if (c && !c.contains(e.relatedTarget)) c.classList.remove("over"); });
-    board.addEventListener("drop", function (e) {
-      var c = e.target.closest(".kcol"); if (!c || !dragId) return;
+    view.addEventListener("dragstart", function (e) { var c = e.target.closest && e.target.closest(".frow"); if (!c) return; dragId = c.getAttribute("data-id"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
+    view.addEventListener("dragover", function (e) { var c = e.target.closest && e.target.closest(".fstage"); if (c && dragId) { e.preventDefault(); c.classList.add("over"); } });
+    view.addEventListener("dragleave", function (e) { var c = e.target.closest && e.target.closest(".fstage"); if (c && !c.contains(e.relatedTarget)) c.classList.remove("over"); });
+    view.addEventListener("drop", function (e) {
+      var c = e.target.closest && e.target.closest(".fstage"); if (!c || !dragId) return;
       e.preventDefault(); var id = dragId; dragId = null; mover(id, c.getAttribute("data-stage"));
     });
   }
