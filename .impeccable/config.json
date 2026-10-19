@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "lato",
+        "createdAt": "2026-10-16T13:46:06.625Z",
+        "reason": "Same brand font, lowercase variant reported for index.html"
+      }
+    ]
+  }
+}

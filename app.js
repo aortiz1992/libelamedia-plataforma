@@ -146,13 +146,14 @@
   /* ------------------------------------------------------------ marco */
   function shell(inner) {
     var hs = location.hash || "#/";
-    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : /^#\/prospeccion/.test(hs) ? "p" : /^#\/empresa/.test(hs) ? "l" : "h";
+    var cur = /^#\/tablero/.test(hs) ? "t" : /^#\/resumen/.test(hs) ? "r" : /^#\/prospeccion/.test(hs) ? "p" : /^#\/(campana|plantillas)/.test(hs) ? "c" : /^#\/empresa/.test(hs) ? "l" : "h";
     setHtml('<header class="bar"><a class="brand" href="#/">LIBELAMEDIA</a>' +
       '<nav class="nav" aria-label="Secciones"><a href="#/"' + (cur === "h" ? ' aria-current="page"' : "") + '>Hoy</a>' +
       '<a href="#/empresas"' + (cur === "l" ? ' aria-current="page"' : "") + '>Empresas</a>' +
       '<a href="#/tablero"' + (cur === "t" ? ' aria-current="page"' : "") + '>Tablero</a>' +
       '<a href="#/resumen"' + (cur === "r" ? ' aria-current="page"' : "") + '>Resumen</a>' +
-      '<a href="#/prospeccion"' + (cur === "p" ? ' aria-current="page"' : "") + '>Prospección</a></nav>' +
+      '<a href="#/prospeccion"' + (cur === "p" ? ' aria-current="page"' : "") + '>Prospección</a>' +
+      '<a href="#/campanas"' + (cur === "c" ? ' aria-current="page"' : "") + '>Campañas</a></nav>' +
       '<span class="who"><span class="muted">' + esc(session.user.email) + '</span> ' +
       '<button class="ghost" id="out">Salir</button></span></header>' + inner);
     document.getElementById("out").addEventListener("click", async function () {
@@ -407,6 +408,225 @@
       else el.addEventListener("click", function () {
         if (k === "hecha") { var t = tar.filter(function (x) { return x.id === id; })[0]; cambiar(id, { estado: "hecha", completada_en: new Date().toISOString() }, t && t.repite ? "Hecha. Creada la siguiente (" + t.repite + ")" : "Tarea hecha"); }
         else cambiar(id, { estado: "cancelada" }, "Tarea cancelada");
+      });
+    });
+  }
+
+  /* ------------------------------------------------------------ campañas */
+  var ESTADO_CAMP = { borrador: "Borrador", aprobada: "Aprobada", activa: "Activa", pausada: "Pausada", terminada: "Terminada" };
+  var METODOS = { tradicional: "Tradicional", masivo: "Masivo" };
+  var VARIABLES_AYUDA = "{saludo} {nombre} {empresa} {gancho} {producto_a_citar} {firma}";
+
+  function diaMad(iso) { return new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" }); }
+  function horaMad(iso) { return new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Madrid" }); }
+  function diaLargo(ymd) { return new Date(ymd + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); }
+
+  async function showCampanas() {
+    shell('<p class="muted">Cargando…</p>');
+    var r = await db.from("campanas").select("*,campana_contactos(contacto_id,aprobado_en)").order("creado_en", { ascending: false });
+    if (r.error) return fail("No se pudo leer: " + r.error.message);
+    var cs = r.data;
+    shell('<div class="sec-h"><h1 class="page">Campañas <span class="count">' + cs.length + '</span></h1><span class="li-a">' +
+      '<a class="ghost sm btnlink" href="#/plantillas">Plantillas</a><button type="button" class="sm" id="cn">+ Nueva campaña</button></span></div>' +
+      '<p class="muted small">El envío real está apagado: por ahora las campañas solo se preparan y se simulan. No sale ningún email.</p>' +
+      (cs.length ? '<ul class="rows">' + cs.map(function (c) {
+        var ap = (c.campana_contactos || []).filter(function (x) { return x.aprobado_en; }).length;
+        return '<li><a class="row" href="#/campana/' + c.id + '"><span class="r-main"><strong>' + esc(c.nombre) + '</strong><span class="muted">' + esc(METODOS[c.metodo]) + ' · tope ' + c.tope_diario + ' al día' + (c.segmento ? ' · ' + esc(c.segmento) : "") + '</span></span>' +
+          '<span class="r-side"><span class="tag">' + esc(ESTADO_CAMP[c.estado] || c.estado) + '</span><span class="muted small">' + ap + ' contacto(s) aprobado(s)</span></span></a></li>';
+      }).join("") + '</ul>' : '<p class="muted">Aún no hay campañas.</p>'));
+    document.getElementById("cn").addEventListener("click", function () {
+      openForm("Nueva campaña", [
+        { k: "nombre", label: "Nombre", req: true },
+        { k: "metodo", label: "Método (decide el juego de plantillas)", type: "select", options: METODOS },
+        { k: "segmento", label: "Segmento o nota (opcional)" },
+        { k: "tope_diario", label: "Tope diario de emails", type: "number", req: true }
+      ], { metodo: "tradicional", tope_diario: 10 }, async function (v) {
+        norm0(v);
+        var ins = must(await db.from("campanas").insert({ nombre: v.nombre, metodo: v.metodo, segmento: v.segmento, tope_diario: v.tope_diario }).select("id").single());
+        var pl = must(await db.from("plantillas").select("id,idioma,paso").eq("nombre", METODOS[v.metodo]).eq("activa", true)).data;
+        if (pl.length) must(await db.from("campana_plantillas").insert(pl.map(function (x) { return { campana_id: ins.data.id, paso: x.paso, idioma: x.idioma, plantilla_id: x.id }; })));
+        location.hash = "#/campana/" + ins.data.id;
+      });
+    });
+  }
+
+  async function showCampana(id) {
+    shell('<p class="muted">Cargando…</p>');
+    var res = await Promise.all([
+      db.from("campanas").select("*").eq("id", id).maybeSingle(),
+      db.from("campana_plantillas").select("paso,idioma,plantillas(nombre,asunto,revisada)").eq("campana_id", id).order("paso"),
+      db.from("configuracion").select("clave,valor").in("clave", ["envio_activo", "tope_diario_global"]),
+      db.rpc("candidatos_campana", { p_campana: id })
+    ]);
+    var err = res.map(function (x) { return x.error; }).filter(Boolean)[0];
+    if (err) return fail("No se pudo leer: " + err.message);
+    var camp = res[0].data;
+    if (!camp) return fail("Campaña no encontrada.");
+    var pls = res[1].data, cfg = {}; res[2].data.forEach(function (x) { cfg[x.clave] = x.valor; });
+    var cand = res[3].data;
+    var global = Number(cfg.tope_diario_global || camp.tope_diario), efectivo = Math.min(camp.tope_diario, global);
+    var sinRevisar = pls.filter(function (x) { return x.plantillas && !x.plantillas.revisada; }).length;
+    var f = { q: "", etapa: "nueva", sector: "", region: "", idioma: "", estado: "" }, sel = {};
+    var sectores = Array.from(new Set(cand.map(function (c) { return c.sector || "(sin clasificar)"; }))).sort();
+    var regiones = Array.from(new Set(cand.map(function (c) { return c.region; }).filter(Boolean))).sort();
+    function opt(list, cur, todos) { return '<option value="">' + todos + '</option>' + list.map(function (s) { return '<option' + (cur === s ? " selected" : "") + '>' + esc(s) + '</option>'; }).join(""); }
+    function mapOpt(map, cur, todos) { return '<option value="">' + todos + '</option>' + Object.keys(map).map(function (k) { return '<option value="' + k + '"' + (cur === k ? " selected" : "") + '>' + esc(map[k]) + '</option>'; }).join(""); }
+
+    shell('<p><a href="#/campanas">← Campañas</a></p>' +
+      '<div class="head"><h1 class="page">' + esc(camp.nombre) + '</h1><span class="tag">' + esc(METODOS[camp.metodo]) + '</span> <span class="tag">' + esc(ESTADO_CAMP[camp.estado] || camp.estado) + '</span></div>' +
+      '<section class="card wide"><div class="sec-h"><h2>Datos</h2><span class="li-a"><button type="button" class="ghost sm" id="ce">Editar</button><button type="button" class="ghost danger sm" id="cd">Borrar campaña</button></span></div>' +
+      '<p class="small">Tope diario de la campaña: <strong>' + camp.tope_diario + '</strong> · tope global: <strong>' + global + '</strong> · el plan usa <strong>' + efectivo + '</strong> emails al día.' + (camp.segmento ? ' · ' + esc(camp.segmento) : "") + '</p>' +
+      '<p class="small muted">Envío real: <strong>' + (cfg.envio_activo === "true" ? "ENCENDIDO" : "apagado") + '</strong>. En esta pieza nada se envía; solo se prepara y se simula.</p></section>' +
+      '<section class="card wide"><div class="sec-h"><h2>Plantillas de esta campaña</h2><a class="ghost sm btnlink" href="#/plantillas">Editar plantillas</a></div>' +
+      (pls.length ? '<ul class="plain">' + pls.map(function (x) { return '<li><span class="tag">Paso ' + x.paso + ' · ' + esc((x.idioma || "").toUpperCase()) + '</span> ' + esc(x.plantillas ? x.plantillas.asunto : "") + (x.plantillas && !x.plantillas.revisada ? ' <span class="tag warn">Sin revisar</span>' : "") + '</li>'; }).join("") + '</ul>'
+        : '<p class="muted">Esta campaña no tiene plantillas enlazadas.</p>') +
+      (sinRevisar ? '<p class="small muted">Hay ' + sinRevisar + ' plantilla(s) sin revisar. Léelas y márcalas como revisadas antes de activar la campaña (pieza 6).</p>' : "") + '</section>' +
+      '<section class="card wide"><div class="sec-h"><h2>Destinatarios <span class="count" id="dcount"></span></h2><span class="li-a"><button type="button" class="primary sm" id="dap">Aprobar seleccionados</button><button type="button" class="ghost sm" id="dqu">Quitar seleccionados</button></span></div>' +
+      '<form class="filters f5" onsubmit="return false">' +
+      '<div><label for="fq">Buscar</label><input id="fq" type="search" placeholder="Empresa, contacto, email…"></div>' +
+      '<div><label for="fe">Etapa</label><select id="fe">' + mapOpt(ETAPAS, "nueva", "Todas") + '</select></div>' +
+      '<div><label for="fs">Sector</label><select id="fs">' + opt(sectores, "", "Todos") + '</select></div>' +
+      '<div><label for="fr">Región</label><select id="fr">' + opt(regiones, "", "Todas") + '</select></div>' +
+      '<div><label for="fi">Idioma</label><select id="fi">' + mapOpt(IDIOMAS, "", "Todos") + '</select></div>' +
+      '<div><label for="fx">Estado</label><select id="fx"><option value="">Todos</option><option value="disp">Disponibles</option><option value="apro">Aprobados</option><option value="bloq">Bloqueados</option></select></div></form>' +
+      '<p class="small"><button type="button" class="ghost sm" id="dall">Marcar todos los disponibles de la lista</button> <span class="muted" id="dsel"></span></p><div id="dlist"></div></section>' +
+      '<section class="card wide"><h2>Simulacro</h2><p class="small muted">Calcula qué saldría cada día, sin enviar nada: reparte entre las 9:00 y las 13:00, de lunes a viernes, salta festivos nacionales y respeta el tope.</p>' +
+      '<div class="simbar"><div><label for="sim_ini">Primer día (vacío = el siguiente día hábil)</label><input type="date" id="sim_ini"></div><button type="button" id="sim_go">Generar simulacro</button></div><div id="sim_out"></div></section>');
+
+    // ---- destinatarios
+    function visibles() {
+      var q = norm(f.q);
+      return cand.filter(function (c) {
+        if (f.etapa && c.etapa !== f.etapa) return false;
+        if (f.sector && (c.sector || "(sin clasificar)") !== f.sector) return false;
+        if (f.region && c.region !== f.region) return false;
+        if (f.idioma && c.idioma !== f.idioma) return false;
+        if (f.estado === "disp" && (c.motivo || c.aprobado)) return false;
+        if (f.estado === "apro" && !c.aprobado) return false;
+        if (f.estado === "bloq" && !c.motivo) return false;
+        if (q && norm([c.empresa, c.contacto, c.email].join(" ")).indexOf(q) < 0) return false;
+        return true;
+      });
+    }
+    function selCount() { return Object.keys(sel).filter(function (k) { return sel[k]; }).length; }
+    function paint() {
+      var v = visibles(), aprob = cand.filter(function (c) { return c.aprobado; }).length;
+      document.getElementById("dcount").textContent = v.length + " de " + cand.length + " · " + aprob + " aprobado(s)";
+      document.getElementById("dsel").textContent = selCount() ? selCount() + " seleccionado(s)" : "";
+      document.getElementById("dlist").innerHTML = v.length ? '<ul class="rows">' + v.map(function (c) {
+        var bloq = !!c.motivo, dis = bloq && !c.aprobado;
+        return '<li><label class="crow' + (dis ? " off" : "") + '"><input type="checkbox" data-cid="' + c.contacto_id + '"' + (sel[c.contacto_id] ? " checked" : "") + (dis ? " disabled" : "") + '>' +
+          '<span class="r-main"><strong><a href="#/empresa/' + c.empresa_id + '">' + esc(c.empresa) + '</a></strong><span class="muted small">' + esc([c.contacto, c.email, (c.idioma || "").toUpperCase(), ETAPAS[c.etapa]].filter(Boolean).join(" · ")) + '</span></span>' +
+          '<span class="r-side">' + (c.aprobado ? '<span class="tag stage-ganada">Aprobado</span>' : "") + (bloq ? '<span class="motivo">' + esc(c.motivo) + '</span>' : (c.aprobado ? "" : '<span class="tag">Disponible</span>')) + '</span></label></li>';
+      }).join("") + '</ul>' : '<p class="muted">Ningún contacto coincide con los filtros.</p>';
+    }
+    paint();
+    [["fq", "q"], ["fe", "etapa"], ["fs", "sector"], ["fr", "region"], ["fi", "idioma"], ["fx", "estado"]].forEach(function (p) {
+      document.getElementById(p[0]).addEventListener("input", function (e) { f[p[1]] = e.target.value; paint(); });
+    });
+    document.getElementById("dlist").addEventListener("change", function (e) {
+      var cid = e.target.getAttribute && e.target.getAttribute("data-cid");
+      if (cid) { sel[cid] = e.target.checked; document.getElementById("dsel").textContent = selCount() ? selCount() + " seleccionado(s)" : ""; }
+    });
+    document.getElementById("dall").addEventListener("click", function () {
+      visibles().forEach(function (c) { if (!c.motivo && !c.aprobado) sel[c.contacto_id] = true; }); paint();
+    });
+    async function aplicar(aprobar) {
+      var ids = Object.keys(sel).filter(function (k) { return sel[k]; });
+      var byId = {}; cand.forEach(function (c) { byId[c.contacto_id] = c; });
+      ids = ids.filter(function (k) { return aprobar ? (!byId[k].aprobado && !byId[k].motivo) : byId[k].aprobado; });
+      if (!ids.length) return toast(aprobar ? "Marca contactos disponibles (sin bloqueo) para aprobarlos" : "Marca contactos aprobados para quitarlos", true);
+      try {
+        if (aprobar) must(await db.from("campana_contactos").upsert(ids.map(function (k) { return { campana_id: id, contacto_id: k, aprobado_en: new Date().toISOString(), estado: "pendiente" }; }), { onConflict: "campana_id,contacto_id" }));
+        else must(await db.from("campana_contactos").delete().eq("campana_id", id).in("contacto_id", ids));
+        toast(aprobar ? ids.length + " contacto(s) aprobado(s)" : ids.length + " contacto(s) quitado(s)"); showCampana(id);
+      } catch (e) { toast(friendly(e), true); }
+    }
+    document.getElementById("dap").addEventListener("click", function () { aplicar(true); });
+    document.getElementById("dqu").addEventListener("click", function () { aplicar(false); });
+
+    // ---- editar / borrar
+    document.getElementById("ce").addEventListener("click", function () {
+      openForm("Editar campaña", [
+        { k: "nombre", label: "Nombre", req: true }, { k: "segmento", label: "Segmento o nota" },
+        { k: "tope_diario", label: "Tope diario de emails (1-60)", type: "number", req: true }
+      ], camp, async function (v) { norm0(v); must(await db.from("campanas").update(v).eq("id", id)); toast("Campaña guardada"); showCampana(id); });
+    });
+    document.getElementById("cd").addEventListener("click", function () {
+      confirmDialog({ title: "Borrar campaña", body: "<p>¿Borrar <strong>" + esc(camp.nombre) + "</strong> con sus destinatarios aprobados? Las empresas y contactos no se tocan.</p>", ok: "Borrar", danger: true,
+        run: async function () { must(await db.from("campanas").delete().eq("id", id)); } }).then(function (ok) { if (ok) { toast("Campaña borrada"); location.hash = "#/campanas"; } });
+    });
+
+    // ---- simulacro
+    document.getElementById("sim_go").addEventListener("click", async function () {
+      var b = this; b.disabled = true; var out = document.getElementById("sim_out"); out.innerHTML = '<p class="muted">Calculando…</p>';
+      var ini = document.getElementById("sim_ini").value || null;
+      var r = await db.rpc("simular_campana", { p_campana: id, p_inicio: ini });
+      b.disabled = false;
+      if (r.error) { out.innerHTML = '<p class="msg err">' + esc(friendly(r.error)) + '</p>'; return; }
+      var rows = r.data, prog = rows.filter(function (x) { return x.programado_para; }), bloq = rows.filter(function (x) { return !x.programado_para; });
+      if (!rows.length) { out.innerHTML = '<p class="muted">No hay contactos aprobados. Aprueba algunos arriba y vuelve a generar el simulacro.</p>'; return; }
+      var dias = {}, orden = [];
+      prog.forEach(function (x) { var d = diaMad(x.programado_para); if (!dias[d]) { dias[d] = []; orden.push(d); } dias[d].push(x); });
+      var nContactos = new Set(prog.map(function (x) { return x.contacto_id; })).size;
+      var html = '<p class="small"><strong>' + nContactos + ' contacto(s) programado(s) · ' + prog.length + ' emails</strong>' + (orden.length ? ' · del ' + esc(diaLargo(orden[0])) + ' al ' + esc(diaLargo(orden[orden.length - 1])) : "") + ' · tope efectivo ' + efectivo + ' al día.</p>';
+      html += orden.map(function (d) {
+        var l = dias[d], cnt = [1, 2, 3].map(function (p) { var n = l.filter(function (x) { return x.paso === p; }).length; return n ? n + " del paso " + p : ""; }).filter(Boolean).join(", ");
+        return '<details class="day"><summary><strong>' + esc(diaLargo(d)) + '</strong> · ' + l.length + ' email(s) <span class="muted small">(' + cnt + ')</span></summary><ul class="plain">' + l.map(function (x) {
+          return '<li><details><summary>' + esc(horaMad(x.programado_para)) + ' · paso ' + x.paso + ' · ' + esc(x.empresa) + ' <span class="muted small">' + esc(x.email) + '</span></summary>' +
+            '<p class="small"><strong>Asunto:</strong> ' + esc(x.asunto) + '</p><pre class="guion">' + esc(x.cuerpo) + '</pre></details></li>';
+        }).join("") + '</ul></details>';
+      }).join("");
+      if (bloq.length) html += '<h3 class="h3">Bloqueados (no saldrían) <span class="count">' + bloq.length + '</span></h3><ul class="plain">' + bloq.map(function (x) {
+        return '<li><strong>' + esc(x.empresa) + '</strong> <span class="muted small">' + esc(x.email || "sin email") + '</span> <span class="motivo">' + esc(x.motivo) + '</span></li>'; }).join("") + '</ul>';
+      out.innerHTML = html;
+    });
+  }
+
+  /* ------------------------------------------------------------ plantillas */
+  async function showPlantillas() {
+    shell('<p class="muted">Cargando…</p>');
+    var res = await Promise.all([
+      db.from("plantillas").select("*").order("nombre").order("idioma").order("paso"),
+      db.from("configuracion").select("valor").eq("clave", "firma").maybeSingle()
+    ]);
+    if (res[0].error) return fail("No se pudo leer: " + res[0].error.message);
+    var pls = res[0].data, firma = res[1].data ? res[1].data.valor : "";
+    var grupos = {}; pls.forEach(function (p) { (grupos[p.nombre] = grupos[p.nombre] || []).push(p); });
+    shell('<p><a href="#/campanas">← Campañas</a></p><div class="sec-h"><h1 class="page">Plantillas</h1><button type="button" class="ghost sm" id="pf">Editar firma</button></div>' +
+      '<p class="small muted">Variables disponibles: <code>' + esc(VARIABLES_AYUDA) + '</code>. Si una plantilla exige una variable y el contacto no la tiene, ese contacto queda bloqueado. Sin línea de baja, por decisión tuya.</p>' +
+      '<section class="card wide"><h2>Firma <span class="count">({firma})</span></h2><pre class="guion">' + esc(firma) + '</pre></section>' +
+      Object.keys(grupos).map(function (n) {
+        return '<section class="card wide"><h2>' + esc(n) + '</h2><ul class="plain">' + grupos[n].map(function (p) {
+          return '<li><div class="li-h"><span><span class="tag">' + esc(p.idioma.toUpperCase()) + ' · paso ' + p.paso + '</span> <strong>' + esc(p.asunto) + '</strong>' +
+            (p.revisada ? "" : ' <span class="tag warn">Sin revisar</span>') + (p.activa ? "" : ' <span class="tag">Inactiva</span>') + '</span>' +
+            '<span class="li-a"><button type="button" class="ghost sm" data-pe="' + p.id + '">Editar</button>' + (p.revisada ? "" : '<button type="button" class="primary sm" data-pr="' + p.id + '">Marcar revisada</button>') + '</span></div>' +
+            '<details class="prep"><summary>Ver texto</summary><pre class="guion">' + esc(p.cuerpo) + '</pre><p class="small muted">Exige: ' + esc((p.variables_requeridas || []).join(", ") || "nada") + '</p></details></li>';
+        }).join("") + '</ul></section>';
+      }).join(""));
+    document.getElementById("pf").addEventListener("click", function () {
+      openForm("Firma de los emails", [{ k: "valor", label: "Texto ({firma})", type: "textarea", rows: 5, req: true }], { valor: firma }, async function (v) {
+        must(await db.from("configuracion").update({ valor: v.valor, actualizado_en: new Date().toISOString() }).eq("clave", "firma")); toast("Firma guardada"); showPlantillas();
+      });
+    });
+    root.querySelectorAll("[data-pe]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var p = pls.filter(function (x) { return x.id === b.getAttribute("data-pe"); })[0];
+        openForm("Editar plantilla " + p.nombre + " · " + p.idioma.toUpperCase() + " · paso " + p.paso, [
+          { k: "asunto", label: "Asunto", req: true },
+          { k: "cuerpo", label: "Cuerpo (variables: " + VARIABLES_AYUDA + ")", type: "textarea", rows: 14, req: true },
+          { k: "variables_requeridas", label: "Variables obligatorias", type: "csv" },
+          { k: "activa", label: "Activa", type: "checkbox" }
+        ], p, async function (v) {
+          v.revisada = true; // al guardarla tú, cuenta como revisada
+          must(await db.from("plantillas").update(v).eq("id", p.id)); toast("Plantilla guardada y marcada como revisada"); showPlantillas();
+        });
+      });
+    });
+    root.querySelectorAll("[data-pr]").forEach(function (b) {
+      b.addEventListener("click", async function () {
+        var u = await db.from("plantillas").update({ revisada: true }).eq("id", b.getAttribute("data-pr"));
+        if (u.error) toast(friendly(u.error), true); else { toast("Marcada como revisada"); showPlantillas(); }
       });
     });
   }
@@ -710,6 +930,9 @@
     else if (/^#\/tablero/.test(location.hash)) showBoard();
     else if (/^#\/resumen/.test(location.hash)) showSummary();
     else if (/^#\/prospeccion/.test(location.hash)) showProspeccion();
+    else if (/^#\/campanas/.test(location.hash)) showCampanas();
+    else if (/^#\/campana\/[0-9a-f-]{36}$/i.test(location.hash)) showCampana(location.hash.slice(10));
+    else if (/^#\/plantillas/.test(location.hash)) showPlantillas();
     else if (/^#\/empresas/.test(location.hash)) showList();
     else showHoy();
   }
