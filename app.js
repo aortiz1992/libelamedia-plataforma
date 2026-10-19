@@ -772,6 +772,59 @@
   function field(label, val) { return val ? '<div class="f"><dt>' + esc(label) + '</dt><dd>' + val + '</dd></div>' : ""; }
   function btn(act, label, cls) { return '<button type="button" class="' + (cls || "ghost") + ' sm" data-act="' + act + '">' + esc(label) + '</button>'; }
 
+  // Estado del email 1 de un contacto en la ficha: botón «Enviar email», «en cola» (cancelable) o «enviado».
+  function envioCtl(c) {
+    var e = ctx.e, env = ctx.envs.filter(function (x) { return x.contacto_id === c.id && (x.estado === "programado" || x.estado === "enviado"); })[0];
+    if (env && env.estado === "enviado") return '<span class="tag stage-ganada">Email 1 enviado · ' + esc(fecha(env.enviado_en)) + '</span>';
+    if (env) return '<span class="tag warn">Email 1 en cola</span>' + (env.campanas && env.campanas.suelta ? btn("cancel-suelto:" + env.id, "Cancelar envío") : "");
+    if (!c.email || c.no_contactar || e.no_contactar || e.etapa !== "nueva") return "";
+    return btn("send-email:" + c.id, "Enviar email", "primary");
+  }
+
+  async function enviarEmailDialog(c) {
+    var e = ctx.e, idioma = c.idioma || e.idioma || "es";
+    var r = await Promise.all([
+      db.from("plantillas").select("id,nombre,idioma,revisada").eq("paso", 1).eq("activa", true).eq("idioma", idioma).order("nombre"),
+      db.from("configuracion").select("valor").eq("clave", "envio_activo").maybeSingle()
+    ]);
+    if (r[0].error) return toast(friendly(r[0].error), true);
+    var pls = r[0].data, encendido = r[1].data && r[1].data.valor === "true";
+    if (!pls.length) return toast("No hay ninguna plantilla de email 1 en " + (IDIOMAS[idioma] || idioma) + ". Créala en Campañas → Plantillas.", true);
+    var d = dialog('<form method="dialog" class="dform"><h2>Enviar email a ' + esc(e.nombre) + '</h2>' +
+      '<p class="small">Para: <strong>' + esc(c.email) + '</strong> · ' + esc(IDIOMAS[idioma] || idioma) + '</p>' +
+      '<label for="se_pl">Plantilla</label><select id="se_pl">' + pls.map(function (p) { return '<option value="' + p.id + '">' + esc(p.nombre) + (p.revisada ? "" : " (sin revisar)") + '</option>'; }).join("") + '</select>' +
+      '<p class="msg err" id="se_falta" role="alert"></p>' +
+      '<label for="se_as">Asunto</label><input type="text" id="se_as" required>' +
+      '<label for="se_cu">Texto (puedes retocarlo)</label><textarea id="se_cu" rows="14" required></textarea>' +
+      '<p class="small ' + (encendido ? "muted" : "") + '">' + (encendido
+        ? "Lo envía el cartero desde info@libelamedia.com en unos minutos (de lunes a viernes, de 9:00 a 13:00). Solo el email 1: no se programan seguimientos."
+        : "<strong>El envío está apagado:</strong> el email quedará en cola y saldrá cuando lo enciendas en Campañas. Solo el email 1: no se programan seguimientos.") + '</p>' +
+      '<p class="msg err" id="derr" role="alert"></p>' +
+      '<div class="actions"><button type="button" class="ghost" id="dcancel">Cancelar</button><button type="submit" id="dsave">Enviar</button></div></form>');
+    var sel = d.querySelector("#se_pl"), as = d.querySelector("#se_as"), cu = d.querySelector("#se_cu"), err = d.querySelector("#derr"), falta = d.querySelector("#se_falta");
+    async function cargar() {
+      falta.textContent = "";
+      var p = await db.rpc("preparar_email_suelto", { p_contacto: c.id, p_plantilla: sel.value });
+      if (p.error) { err.textContent = friendly(p.error); return; }
+      var x = p.data[0] || {};
+      as.value = x.asunto || ""; cu.value = x.cuerpo || "";
+      if (x.falta) falta.textContent = "Falta el dato «" + x.falta + "» en la ficha: complétalo en el texto o edita la empresa.";
+    }
+    sel.addEventListener("change", cargar);
+    d.querySelector("#dcancel").addEventListener("click", function () { d.close(); });
+    d.querySelector("form").addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      var b = d.querySelector("#dsave"); b.disabled = true; err.textContent = "";
+      try {
+        var res = must(await db.rpc("enviar_email_suelto", { p_contacto: c.id, p_asunto: as.value, p_cuerpo: cu.value })).data || {};
+        d.close();
+        toast(res.envio_activo ? (res.en_ventana ? "En cola: sale en unos minutos" : "En cola: sale en el próximo horario de envío") : "En cola. El envío está apagado: enciéndelo en Campañas");
+        await refresh();
+      } catch (x) { err.textContent = friendly(x); b.disabled = false; }
+    });
+    await cargar();
+  }
+
   async function showEmpresa(id) {
     shell('<p class="muted">Cargando…</p>');
     var res = await Promise.all([
@@ -785,8 +838,13 @@
     if (err) return fail("No se pudo leer: " + err.message);
     var e = res[0].data;
     if (!e) return fail("Empresa no encontrada.");
-    var cont = res[1].data, ops = res[2].data, tar = res[3].data, ints = res[4].data;
-    ctx = { e: e, cont: cont, ops: ops, tar: tar, ints: ints };
+    var cont = res[1].data, ops = res[2].data, tar = res[3].data, ints = res[4].data, envs = [];
+    if (cont.length) {
+      var re = await db.from("envios").select("id,contacto_id,estado,programado_para,enviado_en,error,campanas(suelta)").eq("paso", 1)
+        .in("contacto_id", cont.map(function (c) { return c.id; })).order("programado_para", { ascending: false });
+      if (!re.error) envs = re.data;
+    }
+    ctx = { e: e, cont: cont, ops: ops, tar: tar, ints: ints, envs: envs };
     var web = safeUrl(e.web_url) || (e.dominio ? "https://" + e.dominio : null);
     var lugar = [e.poblacion, e.region, e.pais].filter(Boolean).join(", ");
 
@@ -816,7 +874,7 @@
       (cont.length ? '<ul class="plain">' + cont.map(function (c) {
         return '<li><div class="li-h"><span><strong>' + esc(c.nombre || "(sin nombre)") + '</strong>' + (c.cargo ? ' · ' + esc(c.cargo) : "") +
           (c.es_principal ? ' <span class="tag">Principal</span>' : "") + (c.no_contactar ? ' <span class="tag bad">No contactar</span>' : "") + '</span>' +
-          '<span class="li-a">' + btn("edit-contacto:" + c.id, "Editar") + btn("del-contacto:" + c.id, "Borrar") + '</span></div>' +
+          '<span class="li-a">' + envioCtl(c) + btn("edit-contacto:" + c.id, "Editar") + btn("del-contacto:" + c.id, "Borrar") + '</span></div>' +
           '<span class="muted">' + [c.email ? '<a href="mailto:' + esc(c.email) + '">' + esc(c.email) + '</a>' : "", esc(c.telefono), c.whatsapp ? "WhatsApp " + esc(c.whatsapp) : "",
             safeUrl(c.linkedin_url) ? '<a href="' + esc(c.linkedin_url) + '" target="_blank" rel="noopener noreferrer">LinkedIn</a>' : ""].filter(Boolean).join(" · ") + '</span>' +
           (c.notas ? '<br><span class="small">' + esc(c.notas) + '</span>' : "") + '</li>';
@@ -962,6 +1020,9 @@
       norm0(v); if (v.es_principal) await quitarPrincipalDeOtros(id);
       must(await db.from("contactos").update(v).eq("id", id)); toast("Contacto guardado"); await refresh();
     }); }
+    if (a === "send-email") return enviarEmailDialog(pick(ctx.cont, id));
+    if (a === "cancel-suelto") return confirmDialog({ title: "Cancelar envío", body: "<p>¿Quitar este email de la cola? No se enviará.</p>", ok: "Quitar de la cola",
+      run: async function () { must(await db.rpc("cancelar_email_suelto", { p_envio: id })); } }).then(function (ok) { if (ok) { toast("Envío cancelado"); refresh(); } });
     if (a === "del-contacto") { var c2 = pick(ctx.cont, id); return confirmDialog({ title: "Borrar contacto", body: "<p>¿Borrar a <strong>" + esc(c2.nombre || c2.email || "este contacto") + "</strong>? Esto no lo añade a la lista de exclusión.</p>", ok: "Borrar", danger: true,
       run: async function () { must(await db.from("contactos").delete().eq("id", id)); } }).then(function (ok) { if (ok) { toast("Contacto borrado"); refresh(); } }); }
     if (a === "add-op") return openForm("Nueva oportunidad", F.op, { estado: "abierta" }, async function (v) {
