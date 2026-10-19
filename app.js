@@ -154,10 +154,25 @@
       '<a href="#/resumen"' + (cur === "r" ? ' aria-current="page"' : "") + '>Resumen</a>' +
       '<a href="#/prospeccion"' + (cur === "p" ? ' aria-current="page"' : "") + '>Prospección</a>' +
       '<a href="#/campanas"' + (cur === "c" ? ' aria-current="page"' : "") + '>Campañas</a></nav>' +
-      '<span class="who"><span class="muted">' + esc(session.user.email) + '</span> ' +
+      '<span class="who"><span id="envio-slot"></span><span class="muted">' + esc(session.user.email) + '</span> ' +
       '<button class="ghost" id="out">Salir</button></span></header>' + inner);
     document.getElementById("out").addEventListener("click", async function () {
       cache.empresas = null; await db.auth.signOut(); showLogin();
+    });
+    pintarEnvio();
+  }
+
+  // Indicador global del envío real (siempre visible) con botón de parada.
+  async function pintarEnvio() {
+    var r = await db.from("configuracion").select("valor").eq("clave", "envio_activo").maybeSingle();
+    var w = document.getElementById("envio-slot");
+    if (!w || r.error || !r.data) return;
+    var on = r.data.valor === "true";
+    w.innerHTML = '<span class="pill ' + (on ? "on" : "off") + '">Envío ' + (on ? "ENCENDIDO" : "apagado") + '</span>' + (on ? ' <button type="button" class="danger sm" id="stop-envio">PARAR</button>' : "");
+    var b = document.getElementById("stop-envio");
+    if (b) b.addEventListener("click", async function () {
+      var u = await db.rpc("apagar_envio");
+      if (u.error) toast(friendly(u.error), true); else { toast("Envío apagado"); pintarEnvio(); }
     });
   }
   function fail(msg) { shell('<p class="msg err">' + esc(msg) + '</p><p><a href="#/">Volver</a></p>'); }
@@ -421,6 +436,34 @@
   function horaMad(iso) { return new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Madrid" }); }
   function diaLargo(ymd) { return new Date(ymd + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); }
 
+  // Panel del envío real: interruptor general, requisitos y señal del cartero.
+  async function panelEnvio() {
+    var cont = document.getElementById("envpanel"); if (!cont) return;
+    var res = await Promise.all([
+      db.from("configuracion").select("clave,valor,actualizado_en").in("clave", ["envio_activo", "requisito_dns", "requisito_prueba", "cartero_ultimo_latido", "email_alertas", "tope_diario_global"]),
+      db.from("campanas").select("id,campana_plantillas(plantillas(revisada))").eq("estado", "activa")
+    ]);
+    if (res[0].error) { cont.innerHTML = '<p class="msg err">' + esc(res[0].error.message) + '</p>'; return; }
+    var c = {}; res[0].data.forEach(function (x) { c[x.clave] = x; });
+    var sinRev = 0; (res[1].data || []).forEach(function (ca) { (ca.campana_plantillas || []).forEach(function (cp) { if (cp.plantillas && !cp.plantillas.revisada) sinRev++; }); });
+    var on = c.envio_activo && c.envio_activo.valor === "true", dns = c.requisito_dns && c.requisito_dns.valor === "true", prueba = c.requisito_prueba && c.requisito_prueba.valor === "true";
+    var lat = c.cartero_ultimo_latido && c.cartero_ultimo_latido.valor === "visto" ? c.cartero_ultimo_latido.actualizado_en : null;
+    var mins = lat ? Math.round((Date.now() - new Date(lat).getTime()) / 60000) : null;
+    function it(ok, txt, nota) { return '<li class="' + (ok ? "ok" : "ko") + '"><span class="chk" aria-hidden="true">' + (ok ? "✓" : "✗") + '</span> ' + esc(txt) + (nota ? ' <span class="muted small">' + esc(nota) + '</span>' : "") + '</li>'; }
+    cont.innerHTML = '<div class="sec-h"><h2>Envío real <span class="pill ' + (on ? "on" : "off") + '">' + (on ? "ENCENDIDO" : "apagado") + '</span></h2><span class="li-a">' +
+      (on ? '<button type="button" class="danger sm" id="env-off">Apagar envío</button>' : '<button type="button" class="sm" id="env-on">Encender envío</button>') + '</span></div>' +
+      '<ul class="checks">' + it(dns, "SPF y DMARC publicados en el DNS", dns ? "" : "lo comprueba Claude y lo marca") + it(prueba, "Prueba real a tu Gmail con SPF y DKIM en pass", prueba ? "" : "pendiente") +
+      it(sinRev === 0, "Plantillas de las campañas activas revisadas", sinRev ? sinRev + " sin revisar" : "") +
+      it(mins !== null && mins <= 15, "Cartero (Apps Script) funcionando", mins === null ? "aún no ha dado señal" : "última señal hace " + (mins < 60 ? mins + " min" : Math.round(mins / 60) + " h")) + '</ul>' +
+      '<p class="small muted">Tope global: ' + esc(c.tope_diario_global ? c.tope_diario_global.valor : "?") + ' al día · avisos a ' + esc(c.email_alertas ? c.email_alertas.valor : "?") + '. Si los rebotes de 24 h pasan del 5 % o hay errores repetidos, el envío se apaga solo.</p>';
+    var bon = document.getElementById("env-on"), boff = document.getElementById("env-off");
+    if (bon) bon.addEventListener("click", function () {
+      confirmDialog({ title: "Encender el envío real", body: "<p>Los emails programados de las campañas <strong>activas</strong> saldrán de info@libelamedia.com según su calendario, tope y horario (lunes a viernes, 9:00-13:00). Puedes pararlo en cualquier momento desde el botón rojo de arriba.</p>", ok: "Encender", danger: true,
+        run: async function () { var r = await db.rpc("encender_envio"); if (r.error) throw r.error; } }).then(function (ok) { if (ok) { toast("Envío encendido"); showCampanas(); } });
+    });
+    if (boff) boff.addEventListener("click", async function () { var r = await db.rpc("apagar_envio"); if (r.error) toast(friendly(r.error), true); else { toast("Envío apagado"); showCampanas(); } });
+  }
+
   async function showCampanas() {
     shell('<p class="muted">Cargando…</p>');
     var r = await db.from("campanas").select("*,campana_contactos(contacto_id,aprobado_en)").order("creado_en", { ascending: false });
@@ -428,12 +471,13 @@
     var cs = r.data;
     shell('<div class="sec-h"><h1 class="page">Campañas <span class="count">' + cs.length + '</span></h1><span class="li-a">' +
       '<a class="ghost sm btnlink" href="#/plantillas">Plantillas</a><button type="button" class="sm" id="cn">+ Nueva campaña</button></span></div>' +
-      '<p class="muted small">El envío real está apagado: por ahora las campañas solo se preparan y se simulan. No sale ningún email.</p>' +
+      '<section class="card wide" id="envpanel"><p class="muted small">Cargando el estado del envío…</p></section>' +
       (cs.length ? '<ul class="rows">' + cs.map(function (c) {
         var ap = (c.campana_contactos || []).filter(function (x) { return x.aprobado_en; }).length;
         return '<li><a class="row" href="#/campana/' + c.id + '"><span class="r-main"><strong>' + esc(c.nombre) + '</strong><span class="muted">' + esc(METODOS[c.metodo]) + ' · tope ' + c.tope_diario + ' al día' + (c.segmento ? ' · ' + esc(c.segmento) : "") + '</span></span>' +
           '<span class="r-side"><span class="tag">' + esc(ESTADO_CAMP[c.estado] || c.estado) + '</span><span class="muted small">' + ap + ' contacto(s) aprobado(s)</span></span></a></li>';
       }).join("") + '</ul>' : '<p class="muted">Aún no hay campañas.</p>'));
+    panelEnvio();
     document.getElementById("cn").addEventListener("click", function () {
       openForm("Nueva campaña", [
         { k: "nombre", label: "Nombre", req: true },
@@ -456,15 +500,24 @@
       db.from("campanas").select("*").eq("id", id).maybeSingle(),
       db.from("campana_plantillas").select("paso,idioma,plantillas(nombre,asunto,revisada)").eq("campana_id", id).order("paso"),
       db.from("configuracion").select("clave,valor").in("clave", ["envio_activo", "tope_diario_global"]),
-      db.rpc("candidatos_campana", { p_campana: id })
+      db.rpc("candidatos_campana", { p_campana: id }),
+      db.from("envios").select("estado,paso,programado_para,enviado_en,error,contactos(email,empresas(nombre))").eq("campana_id", id).order("programado_para").limit(1000)
     ]);
     var err = res.map(function (x) { return x.error; }).filter(Boolean)[0];
     if (err) return fail("No se pudo leer: " + err.message);
     var camp = res[0].data;
     if (!camp) return fail("Campaña no encontrada.");
     var pls = res[1].data, cfg = {}; res[2].data.forEach(function (x) { cfg[x.clave] = x.valor; });
-    var cand = res[3].data;
+    var cand = res[3].data, envs = res[4].data || [];
     var global = Number(cfg.tope_diario_global || camp.tope_diario), efectivo = Math.min(camp.tope_diario, global);
+    var cuenta = {}; envs.forEach(function (e) { cuenta[e.estado] = (cuenta[e.estado] || 0) + 1; });
+    var ESTADO_ENV = { programado: "Programados", enviado: "Enviados", bloqueado: "Bloqueados", cancelado: "Cancelados", error: "Con error", rebotado: "Rebotados" };
+    var hechos = envs.filter(function (e) { return e.estado !== "programado"; }).slice(-30).reverse();
+    var proximos = envs.filter(function (e) { return e.estado === "programado"; }).slice(0, 8);
+    function filaEnv(e) {
+      var c = e.contactos || {}, em = c.empresas ? c.empresas.nombre : "";
+      return '<li><span class="muted small">' + esc(e.estado === "enviado" && e.enviado_en ? fecha(e.enviado_en) + " " + horaMad(e.enviado_en) : fecha(e.programado_para) + " " + horaMad(e.programado_para)) + '</span> · paso ' + e.paso + ' · <strong>' + esc(em) + '</strong> <span class="muted small">' + esc(c.email || "") + '</span> <span class="tag">' + esc(ESTADO_ENV[e.estado] || e.estado) + '</span>' + (e.error ? ' <span class="motivo">' + esc(e.error) + '</span>' : "") + '</li>';
+    }
     var sinRevisar = pls.filter(function (x) { return x.plantillas && !x.plantillas.revisada; }).length;
     var f = { q: "", etapa: "nueva", sector: "", region: "", idioma: "", estado: "" }, sel = {};
     var sectores = Array.from(new Set(cand.map(function (c) { return c.sector || "(sin clasificar)"; }))).sort();
@@ -490,6 +543,15 @@
       '<div><label for="fi">Idioma</label><select id="fi">' + mapOpt(IDIOMAS, "", "Todos") + '</select></div>' +
       '<div><label for="fx">Estado</label><select id="fx"><option value="">Todos</option><option value="disp">Disponibles</option><option value="apro">Aprobados</option><option value="bloq">Bloqueados</option></select></div></form>' +
       '<p class="small"><button type="button" class="ghost sm" id="dall">Marcar todos los disponibles de la lista</button> <span class="muted" id="dsel"></span></p><div id="dlist"></div></section>' +
+      '<section class="card wide"><div class="sec-h"><h2>Envío de esta campaña</h2><span class="li-a">' +
+      (camp.estado === "borrador" ? '<button type="button" class="primary sm" id="cact">Activar campaña</button>' : "") +
+      (camp.estado === "pausada" ? '<button type="button" class="primary sm" id="cact">Reanudar</button>' : "") +
+      (camp.estado === "activa" ? '<button type="button" class="ghost sm" id="cpau">Pausar</button>' : "") +
+      (camp.estado === "activa" || camp.estado === "pausada" ? '<button type="button" class="ghost danger sm" id="cter">Terminar</button>' : "") + '</span></div>' +
+      (camp.estado === "borrador" ? '<p class="small muted">«Activar» convierte el simulacro en emails programados (con el primer día que pongas en el simulacro). No sale nada hasta que el envío real esté encendido (panel de Campañas) y llegue su hora.</p>' : "") +
+      (envs.length ? '<p class="small">' + Object.keys(ESTADO_ENV).filter(function (k) { return cuenta[k]; }).map(function (k) { return '<strong>' + cuenta[k] + '</strong> ' + ESTADO_ENV[k].toLowerCase(); }).join(" · ") + '</p>' : '<p class="small muted">Aún no hay emails programados.</p>') +
+      (proximos.length ? '<h3 class="h3">Próximos</h3><ul class="plain">' + proximos.map(filaEnv).join("") + '</ul>' : "") +
+      (hechos.length ? '<details class="prep"><summary>Últimos enviados, cancelados y errores (' + hechos.length + ')</summary><ul class="plain">' + hechos.map(filaEnv).join("") + '</ul></details>' : "") + '</section>' +
       '<section class="card wide"><h2>Simulacro</h2><p class="small muted">Calcula qué saldría cada día, sin enviar nada: reparte entre las 9:00 y las 13:00, de lunes a viernes, salta festivos nacionales y respeta el tope.</p>' +
       '<div class="simbar"><div><label for="sim_ini">Primer día (vacío = el siguiente día hábil)</label><input type="date" id="sim_ini"></div><button type="button" id="sim_go">Generar simulacro</button></div><div id="sim_out"></div></section>');
 
@@ -555,6 +617,23 @@
     document.getElementById("cd").addEventListener("click", function () {
       confirmDialog({ title: "Borrar campaña", body: "<p>¿Borrar <strong>" + esc(camp.nombre) + "</strong> con sus destinatarios aprobados? Las empresas y contactos no se tocan.</p>", ok: "Borrar", danger: true,
         run: async function () { must(await db.from("campanas").delete().eq("id", id)); } }).then(function (ok) { if (ok) { toast("Campaña borrada"); location.hash = "#/campanas"; } });
+    });
+
+    // ---- activar / pausar / terminar
+    var bAct = document.getElementById("cact"), bPau = document.getElementById("cpau"), bTer = document.getElementById("cter");
+    if (bAct) bAct.addEventListener("click", function () {
+      var ini = document.getElementById("sim_ini").value || null;
+      confirmDialog({ title: (camp.estado === "pausada" ? "Reanudar " : "Activar ") + camp.nombre,
+        body: camp.estado === "pausada" ? "<p>La campaña vuelve a estar activa; los emails vencidos saldrán respetando tope y horario.</p>" :
+          "<p>Se programarán los emails del simulacro" + (ini ? " empezando el " + esc(ini) : " empezando el siguiente día hábil") + ". <strong>No saldrá ninguno</strong> hasta que el envío real esté encendido. Los textos quedan fijados tal como los viste en el simulacro.</p>",
+        ok: camp.estado === "pausada" ? "Reanudar" : "Activar campaña",
+        run: async function () { var r = await db.rpc("activar_campana", { p_campana: id, p_inicio: ini }); if (r.error) throw r.error; } })
+        .then(function (ok) { if (ok) { toast("Campaña activa"); showCampana(id); } });
+    });
+    if (bPau) bPau.addEventListener("click", async function () { var r = await db.rpc("pausar_campana", { p_campana: id }); if (r.error) toast(friendly(r.error), true); else { toast("Campaña pausada"); showCampana(id); } });
+    if (bTer) bTer.addEventListener("click", function () {
+      confirmDialog({ title: "Terminar campaña", body: "<p>Se cancelan los emails que aún no han salido. Los ya enviados y las respuestas se conservan.</p>", ok: "Terminar", danger: true,
+        run: async function () { var r = await db.rpc("terminar_campana", { p_campana: id }); if (r.error) throw r.error; } }).then(function (ok) { if (ok) { toast("Campaña terminada"); showCampana(id); } });
     });
 
     // ---- simulacro
